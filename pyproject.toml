@@ -2,8 +2,16 @@
 name = "prime-agent-skill-draftsight-com"
 version = "0.1.0"
 description = "Drive a running DraftSight app over COM from the Python kernel: draw, dimension, save DWG, export proof images."
+readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["pywin32>=306"]
+# pywin32 is only reachable through COM, so the marker keeps a non-Windows
+# install (CI, a laptop that merely reads the references) from failing on it.
+dependencies = ["pywin32>=306; sys_platform == 'win32'"]
+
+[project.optional-dependencies]
+# The SVG/pixel rigs in references/draftsight-api.md measure rendered text
+# height and dash length; they need an image decoder and arrays.
+docs = ["numpy>=1.26", "pillow>=10"]
 
 [project.scripts]
 draftsight_com = "draftsight_com:main"
@@ -15,3 +23,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/draftsight_com"]
+
+[tool.hatch.build.targets.sdist]
+# The skill and the pi package travel with the sdist on purpose: `pi install
+# git:` fetches the repo, not the sdist, but a pip-only user who builds from
+# source still gets the docs. The decompiled CHM tree (docs/) is vendor
+# copyrighted and regenerable with `ds-docs decompile`, so it stays out.
+include = ["src", "examples", "references", "README.md", "SKILL.md", "package.json"]
+exclude = ["docs", ".pi"]

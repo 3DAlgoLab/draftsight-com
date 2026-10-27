@@ -19,15 +19,26 @@ places where the API returns success while doing nothing.
 
 ## Setup
 
-The skill package `draftsight_com` installs editable into the agent kernel venv
-at session start, so it is importable directly. For a project virtualenv, install
-it once from its directory:
+`import draftsight_com` must succeed **in the interpreter that runs this session's
+code**, which is usually not the first `python` on `PATH`. Check it before drawing:
+
+```python
+import draftsight_com, sys; print(draftsight_com.__file__, sys.executable)
+```
+
+If that raises, install into that exact interpreter - `pip` may be absent from it, so
+prefer `uv pip --python`:
 
 ```
-uv pip install -e "C:\Users\three\.local\share\prime-agent\skills\draftsight-com"
+uv pip install --python <that sys.executable> --editable "<this skill directory>"
 ```
+
+Installed as a pi package (`pi install git:github.com/3DAlgoLab/draftsight-com`), an
+extension resolves the kernel interpreter and installs it at session start; run
+`/draftsight-com` to see what it found and `/draftsight-com install` to force a redo.
 
 DraftSight must be reachable: either already running, or startable by `connect`.
+Windows only: every call here is COM through `pywin32`.
 
 ## Quickstart
 

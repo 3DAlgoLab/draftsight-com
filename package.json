@@ -1,0 +1,33 @@
+{
+  "name": "pi-draftsight-com",
+  "version": "0.1.0",
+  "description": "Pi package: drive a running DraftSight app over COM from the Python kernel - draw, dimension, hatch, save DWG, export proof images.",
+  "keywords": [
+    "pi-package",
+    "pi-skill",
+    "draftsight",
+    "cad",
+    "com",
+    "win32",
+    "python"
+  ],
+  "homepage": "https://github.com/3DAlgoLab/draftsight-com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/3DAlgoLab/draftsight-com.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "pi": {
+    "skills": [
+      "."
+    ],
+    "extensions": [
+      "./extensions/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
