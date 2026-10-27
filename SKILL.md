@@ -122,6 +122,12 @@ it before debugging anything that "should" work through the style objects. Selec
 (`GetSelectionManager` plus `GetLength()`) are documented there too, including the
 selector argument that returns nothing unless it is `1`.
 
+`references/how-to-draw-hole.md` is the other note in that folder, and it answers a different
+question: not how the API behaves but what the geometry should be. Tapped-hole section and top
+view conventions (major diameter thick, minor/tap drill thin, drill point), the callout style
+machinists expect, and the ISO 261/724 tap drill and depth tables. Read it when a drawing asks
+for a hole, before deciding which circles and lines to insert.
+
 ## Official reference: a search target, never a reading target
 
 The installed CHMs unpack into `docs/` - **6,457 pages / 63 MB, 12 s with 7-Zip** (`draftsight_com docs`
@@ -158,7 +164,9 @@ string, and a miss says so rather than dumping the tree.
 **Look things up in this order**, cheapest first, stopping as soon as one answers:
 
 1. **`references/draftsight-api.md`** in this skill - the verified COM map, drafting-variable table, and
-   the quirk list, including which members return success while doing nothing.
+   the quirk list, including which members return success while doing nothing. For what the geometry
+   should *be* (tapped hole representation, tap drill sizes, hole depth conventions) the sibling
+   **`references/how-to-draw-hole.md`** is the same kind of verified note.
 2. **the help pages** - `ds-docs lookup`, for the prose no map carries: what a parameter actually means,
    which `RunCommand` names exist (`ZoomExtents` does not; `ZoomFit` does), the vendor's worked examples.
 3. **a live probe** - the only source for what no document states: how this build marshals a given call
