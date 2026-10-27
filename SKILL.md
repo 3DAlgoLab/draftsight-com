@@ -118,7 +118,51 @@ dimensions, leader, note) that renders as described.
 `references/draftsight-api.md` holds the verified API map, the drafting-variable
 table with numeric proof, the COM quirks list, the crash modes, and the
 SVG/pixel rigs that measure rendered text height and dash length exactly. Read
-it before debugging anything that "should" work through the style objects.
+it before debugging anything that "should" work through the style objects. Selection sets and per-entity length
+(`GetSelectionManager` plus `GetLength()`) are documented there too, including the
+selector argument that returns nothing unless it is `1`.
+
+## Official reference: a search target, never a reading target
+
+The installed CHMs unpack into `docs/` - **6,457 pages / 63 MB, 12 s with 7-Zip** (`draftsight_com docs`
+falls back to `hh.exe` when 7-Zip is absent). The tree is gitignored and not shipped, so generate it once
+per machine. Pages are 1-4 KB, which sounds readable and is not: nothing tells you which of 6,457 pages
+you want, so opening pages is how context gets destroyed. Every access is a search, and `ds-docs lookup`
+is that search: it resolves the page **by filename** first (the API tree names pages `Interface~Member`),
+then prints prose of at most `-n` pages truncated to `-l` lines. One lookup costs ~25 dense lines.
+
+```
+ds-docs decompile                               # all default CHMs; -a for every CHM found, -f to redo
+ds-docs status                                  # sources, extractor, pages per set
+ds-docs lookup IDocumentExporter~ExportToPng     # signature, what each parameter means, vendor examples
+ds-docs lookup -t ZoomFit                       # command reference only: is this RunCommand name real?
+ds-docs lookup -c InsertHatchByBoundary -n 3     # full-text search instead of filename search
+ds-docs lookup dsLnWt -n 3 -l 20                # an enum family, shorter output
+ds-docs html2txt docs\DraftSight\cmdref\command_reference_chart.htm | grep -i zoom
+```
+
+| Set | Pages | Contents |
+|---|---|---|
+| `docs/draftsightapi/` | 4,353 | COM API reference, **named by interface**: `Interop.dsAutomation~Interop.dsAutomation.IPrintManager~PrintOut.html`. Search `IPrintManager`, not `dsPrintManager` |
+| `docs/DraftSight/` | 1,318 | application guide + command reference: `cmdref/command_reference_chart.htm`, `cmdvar/` |
+| `docs/DraftSight_Lisp_Reference/` | 257 | AutoLISP |
+| `docs/DraftSightMech/`, `docs/DraftSightSW/` | 222 / 256 | mechanical, sheet metal |
+| `docs/DraftSightConnected/` | 49 | Connected |
+| `docs/DSAPIHelp/`, `docs/NestingManager/` | 1 each | stubs, low value |
+
+Same surface from Python (`from draftsight_com import docs`): `docs.lookup(pattern, pages=1, max_lines=70,
+cmdref=False, content=False)`, `docs.decompile(names=None, all_chms=False, force=False)`,
+`docs.find_pages`, `docs.html2txt`, `docs.status`. `lookup` is the one to call from a script: it returns a
+string, and a miss says so rather than dumping the tree.
+
+**Look things up in this order**, cheapest first, stopping as soon as one answers:
+
+1. **`references/draftsight-api.md`** in this skill - the verified COM map, drafting-variable table, and
+   the quirk list, including which members return success while doing nothing.
+2. **the help pages** - `ds-docs lookup`, for the prose no map carries: what a parameter actually means,
+   which `RunCommand` names exist (`ZoomExtents` does not; `ZoomFit` does), the vendor's worked examples.
+3. **a live probe** - the only source for what no document states: how this build marshals a given call
+   and which members silently do nothing.
 
 ## Recovery
 

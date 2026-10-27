@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Decompiled DraftSight CHM help (draftsight_com.docs): vendor-copyrighted, ~76 MB,
+# regenerable in about two minutes with `ds-docs decompile`.
+docs/

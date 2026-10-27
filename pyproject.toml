@@ -6,7 +6,8 @@ requires-python = ">=3.11"
 dependencies = ["pywin32>=306"]
 
 [project.scripts]
-draftsight_com = "rlm.skill:cli"
+draftsight_com = "draftsight_com:main"
+ds-docs = "draftsight_com.docs:cli"
 
 [build-system]
 requires = ["hatchling"]

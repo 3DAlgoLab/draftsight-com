@@ -333,6 +333,21 @@ def run(spec: str, out: str, png: str = "", template: str = TEMPLATE) -> str:
             f"{len(module.SPEC.get('entities', ()))} entities{proof}")
 
 
+def main(argv=None):
+    """Entry point for the `draftsight_com` shell command: draw a DWG from a spec file."""
+    import argparse
+
+    ap = argparse.ArgumentParser(prog="draftsight_com",
+                                 description="Draw a DWG from a Python spec dict and export a proof PNG.")
+    ap.add_argument("--spec", required=True, help="python file defining SPEC (see build)")
+    ap.add_argument("--out", required=True, help="dwg path to write")
+    ap.add_argument("--png", default="", help="optional png proof path")
+    ap.add_argument("--template", default=TEMPLATE, help="dwt template for the new document")
+    a = ap.parse_args(argv)
+    print(run(a.spec, a.out, png=a.png, template=a.template))
+    return 0
+
+
 def _load_spec(path):
     import importlib.util
 
