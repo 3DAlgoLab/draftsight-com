@@ -17,6 +17,7 @@ lsm  = doc.GetLineStyleManager()        GetLineStyle(n)  LoadLineStyle(n, file)
 dsm  = doc.GetDimensionStyleManager()   GetActiveDimensionStyle()  (see sizing rules)
 tsm  = doc.GetTextStyleManager()
 eh   = app.GetEntityHelper()            SetLayer / SetLineStyle / GetLayer / SetErased
+selm = doc.GetSelectionManager()        GetSelectedObjectCount(1)  GetSelectedObjects(1, out)  -> ret[0]
 exp  = doc.GetDocumentExporter()        ExportToPng(path) ExportToSvg(path)
 app.Zoom(0, None, None)                 zoom-fit before export
 app.GetColorByIndex(i)                  layer colours
@@ -38,7 +39,7 @@ app.GetColorByIndex(i)                  layer colours
 Hatch boundaries must be closed loops; hatch one loop per call rather than
 relying on multi-loop boundaries. `InsertRotatedDimension`’s 4th argument is a
 **text override**, not a style name: `"%%c23"` renders the diameter sign, `""`
-keeps the measured value. `InsertSimpleNote(x, y, z, height, angle, text)` takes an
+keeps the measured value. Its 5th argument (angle) is in **radians**, not degrees: passing 90.0 renders a dimension tilted ~27° off vertical with a wrong reading (45 measured as 40.23); use `math.pi / 2` for a vertical dimension. `InsertSimpleNote(x, y, z, height, angle, text)` takes an
 explicit height, so notes do not depend on drafting variables.
 
 ## Sizing: drafting variables, with proof
@@ -99,6 +100,68 @@ once per document: `lsm.LoadLineStyle("CENTER", LINETYPES)` where `LINETYPES` is
 `...\Default Files\Linestyles\MM.LIN` (that file also carries `HIDDEN`,
 `PHANTOM`, `CENTER2`, `CENTERX2`). `GetLineStyle(name)` returns `None` when absent.
 
+## Selection and per-entity length
+
+Verified live against three picked entities (two lines, one arc) in a part drawing.
+
+```python
+import pythoncom, win32com.client as w32
+selm = doc.GetSelectionManager()
+
+n    = selm.GetSelectedObjectCount(1)                     # 3
+out  = w32.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_VARIANT, None)
+objs = selm.GetSelectedObjects(1, out)[0]                 # tuple of PyIDispatch, len == n
+total = sum(float(w32.Dispatch(d).GetLength()) for d in objs)   # 921.571793
+```
+
+| Fact | Proof |
+|---|---|
+| The selector argument must be **1** | With three entities picked, `GetSelectedObjectCount` returns 0 for `0`, `2`, `3` and `-1`, and 3 only for `1`. A zero here is the wrong argument, not an empty selection |
+| `GetSelectedObjects` returns entities in **`ret[0]`** | `ret == (tuple_of_PyIDispatch, None)`; `out.value` stays `None` on success. The out-VARIANT is decoration, never the payload |
+| Both arguments are required | Calling with fewer raises `-2147352562` (wrong parameter count) or a pywin32 `int()` coercion error |
+| Interface name comes from ITypeInfo | `d.GetTypeInfo().GetDocumentation(-1)[0]` gives `ILine`, `ICircleArc`. `GetTypeName()`, `GetEntityName()`, `TypeName`, `ObjectType` all return `None` or raise |
+| `GetPickPoints(1, out)` returns picks in **`ret`** | Flat `x,y,z` tuple, one pick per selected entity in selection order; `out.value` stays `None` like `GetSelectedObjects`. This is the only way to recover *where the user clicked*, which entity geometry cannot give |
+| `CDispatch(d)` is not a wrapper | It needs an `olerepr`; use `win32com.client.Dispatch(d)` for dynamic attribute access |
+
+`GetLength()` is present on every sketch entity exposing `EvaluateAtPoint` /
+`GetClosestPointOn` (`ILine`, `ICircleArc`, polylines, splines). It is **true arc
+length**, not chord and not circumference. Cross-checked on an `ICircleArc`:
+
+| Quantity | Value |
+|---|---|
+| `Radius` | 418.01591455136764 |
+| `StartAngle` to `EndAngle` | 135.0004338959052 deg to 179.8049233612266 deg |
+| `Radius * sweep` | 326.88253478734964 |
+| `GetLength()` | 326.88253478734964 |
+
+Exact to the last digit. `StartAngle` / `EndAngle` are **properties** holding
+radians, not methods: `arc.StartAngle()` raises `float object is not callable`,
+which reads like a broken API but is just a misplaced parenthesis.
+
+Text, hatch, note, dimension and block entities have **no** `GetLength()` and raise
+rather than returning 0, so guard per entity when the selection may contain them.
+`GetSelectionManager` also offers `SelectByWindow`, `SelectByPolygon`,
+`SelectByCrossline`, `SelectByPoint`, `GetPickPoints`, `ClearSelections` and
+`PaperSpaceSelectionEnabled` for driving selection programmatically.
+
+### Reading a signature off IDispatch
+
+When a method's shape is unknown, `ITypeInfo` yields it without the typelib, which
+beats guessing. pywin32 exposes `PyFUNCDESC` as `.args`, `.rettype`, `.invkind`,
+`.memid`, `.cParamsOpt` - there is **no** `.cParams`:
+
+```python
+ti = obj._oleobj_.GetTypeInfo()
+for i in range(ti.GetTypeAttr().cFuncs):
+    f = ti.GetFuncDesc(i)
+    print(ti.GetDocumentation(f.memid)[0], f.args, f.rettype)
+```
+
+`f.args` is `[(tdesc, wFlags, name), ...]` with `wFlags` 1 = in, 2 = out. Only
+`GetDocumentation(memid)[0]` gives names; the boilerplate (`QueryInterface`,
+`GetIDsOfNames`, `Invoke`, `get_*` / `put_*`) comes back too. `dir()` on a late-bound
+wrapper proves nothing about what the server implements - enumerate ITypeInfo instead.
+
 ## Crash and silent-failure modes
 
 | Action | Result |
@@ -111,6 +174,8 @@ once per document: `lsm.LoadLineStyle("CENTER", LINETYPES)` where `LINETYPES` is
 | `CreateLayer(name)` | returns `(Layer, Result)`, not a bare `Layer` |
 | `GetEntities(...)` | needs a selection filter plus out-arrays; prefer exported images for verification |
 | `app.RunCommand` | exists, but system-variable strings are unnecessary once the drafting variables above are used |
+| `GetSelectedObjectCount(0)` / `GetSelectedObjects(0, out)` | returns 0 and no entities while entities are picked; the selector is **1** |
+| `GetSelectedObjects` out-VARIANT | stays `None`; the entities arrive in `ret[0]` |
 
 If a call raises `pywintypes.com_error` `-2147023170` (RPC failed) the process is
 gone. `Get-Process DraftSight` to confirm, then `ds.connect(timeout=120)` to
