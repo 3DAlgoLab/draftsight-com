@@ -25,7 +25,10 @@ believing anything else written here.
 | Extension skips install when a candidate is healthy | **verified** | probe log `-> missing` then `-> ready`, no install attempted |
 | Docs regenerate at the new path | **verified** | `ds-docs decompile` -> `total 6457 pages, 63.5 MB -> D:\dev-pi\draftsight-com\docs`; `lookup basepoint` returns real API prose |
 | README claims match behaviour | **verified** | its install description is the behaviour now proven above |
-| `pi install git:github.com/3DAlgoLab/draftsight-com` from a fresh agent dir | **not run** | needs a push first (see [Next](#next)) |
+| Pin is exclusive, not a hint | **verified** | pin to an empty venv: `installed`, then `import draftsight_com, win32com, pythoncom` OK *in that venv*; report line `pinned: <path>` |
+| Discovery still resolves the kernel | **verified** | no pin -> `action: ready`, `python: ~\.pi\.venv\Scripts\python.exe`, `pinned: (discovered)`, nothing reinstalled |
+| Bogus pin fails loudly, never falls back | **verified** | pin=`notepad.exe` -> `action: install-failed`, `python:`/`pinned:` both name it, stderr line + manual command. So `no-python` is a **discovery-only** action; a pin that is not a Python reads `install-failed` |
+| `pi install git:github.com/3DAlgoLab/draftsight-com` from a fresh agent dir | **running** | see [Next](#next) step 2 |
 
 ---
 
@@ -94,6 +97,14 @@ commit either. Pushed history: `fc3bbe9` circle/arc entities, `7e2316b` merged `
   newline. Keep probe prompts on one line and assert they arrived.
 - Console codepage here is cp949 while pi emits box-drawing characters: capture child stdout as
   UTF-8 or die in `UnicodeDecodeError`.
+- Git Bash rewrites a bare `/draftsight-com` argument into `C:/Program Files/Git/draftsight-com`,
+  so pi receives a *path* and answers it as a question — which silently spends a model turn instead
+  of running the command. Scope the escape to the argument
+  (`MSYS2_ARG_CONV_EXCL='/draftsight-com'`); the blunt `MSYS_NO_PATHCONV=1` breaks the `pi` shim
+  itself, whose own `/c/...` launcher path then reaches node unconverted.
+- Probing a pinned path *executes* it (`<exe> -c <probe>`). Pin something that is not a Python and
+  you launch it: `notepad.exe` blocked the probe on a GUI process until it was killed, then `uv`
+  refused it as an interpreter. A bogus pin therefore reads `install-failed`, never `no-python`.
 - Custom providers come from `agent/models.json`; copy it into an isolated agent dir or
   `dpi1/coder1` silently stops existing. `--model dpi1/coder1:off` is rejected.
 
@@ -116,12 +127,16 @@ silently. That reinstall is step 2 of any future move, non-negotiable.
 
 ## Extension design as implemented (`extensions/index.ts`)
 
-Candidates, deduped, existing-only, first hit wins: `$DRAFTSIGHT_COM_PYTHON` → `$PI_PYTHON` →
-`$PI_CODING_AGENT_DIR/../.venv` → `~/.pi/.venv` → `$VIRTUAL_ENV`.
+Two modes, decided by one question: did the caller pin an interpreter? `$DRAFTSIGHT_COM_PYTHON`,
+else `$PI_PYTHON` — when either is set it is the **sole** target, nothing else is probed or
+installed into, because a fallback that already holds the package hides the kernel that does not.
+Otherwise discovery: `$PI_CODING_AGENT_DIR/../.venv` → `~/.pi/.venv` → `$VIRTUAL_ENV`, deduped,
+existing-only, first `ready` wins. `report()` prints `pinned:` as either the path or `(discovered)`,
+so a log line always says which mode answered.
 
 On `session_start`: probe each candidate with `importlib.util.find_spec` (imports nothing from the
 target, so nothing of ours runs inside it), stop at the first `ready`; otherwise remember the first
-candidate in `{missing, incomplete, broken}` and `uv pip install --python <exe> --editable
+target in `{missing, incomplete, broken}` and `uv pip install --python <exe> --editable
 <PKG_DIR>` (900 s), falling back to `<exe> -m pip install -e` only when `where uv` fails, then
 re-probe to confirm. Memoised in `settled`; `/draftsight-com install|repair|force` bypasses it.
 Non-Windows short-circuits to `unsupported` with a note that the reference docs still read fine.
@@ -148,15 +163,17 @@ pi --print --no-session --offline --model dpi1/coder1 "/draftsight-com"   # this
 ```
 
 The install branch needs a run with **no healthy fallback**, otherwise the kernel venv answers
-`ready` and no install is attempted (correct behaviour, but it tests nothing). Give the process a
-fake home so `~/.pi/.venv` resolves into the wilderness:
+`ready` and no install is attempted (correct behaviour, but it tests nothing). Since the pin became
+exclusive, **the pin *is* the no-fallback switch** — `DRAFTSIGHT_COM_PYTHON` alone is enough, no
+fake home required:
 
 ```powershell
-$env:HOME = "$T\fakehome"; $env:USERPROFILE = "$T\fakehome"   # os.homedir() follows USERPROFILE
-$env:PI_CODING_AGENT_DIR = "$T\fakehome\.pi\agent"            # copy settings/models/auth here too
+$env:DRAFTSIGHT_COM_PYTHON = "$T\venv\Scripts\python.exe"   # sole target; nothing else is probed
 ```
 
-That is the configuration that produced `install exit=0 tail=+ pywin32==312`.
+The earlier configuration (`$env:HOME = "$T\fakehome"; $env:USERPROFILE = "$T\fakehome"`, agent dir
+inside it) is still the way to test *discovery* with no kernel venv in reach; it is what produced
+`install exit=0 tail=+ pywin32==312`.
 
 ---
 

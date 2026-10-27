@@ -46,16 +46,26 @@ const venvPython = (venv: string) =>
   isWin ? join(venv, "Scripts", "python.exe") : join(venv, "bin", "python");
 
 /**
- * Interpreter candidates, most likely to be the agent kernel first.
+ * An explicit pin is an instruction, not a hint. If the caller told us which
+ * interpreter runs the session, that interpreter is the only target: a
+ * fallback that already has the package does not help a kernel that does not,
+ * which is precisely the failure this bootstrap exists to prevent.
+ */
+function pinned(): string | undefined {
+  for (const name of ["DRAFTSIGHT_COM_PYTHON", "PI_PYTHON"]) {
+    const v = process.env[name];
+    if (v) return v;
+  }
+  return undefined;
+}
+
+/**
+ * Discovered candidates, most likely to be the agent kernel first.
  * The pi kernel venv is a sibling of the agent config dir: PI_CODING_AGENT_DIR
  * defaults to ~/.pi/agent, so the venv is ~/.pi/.venv.
  */
-function candidates(): string[] {
+function discovered(): string[] {
   const out: string[] = [];
-  for (const name of ["DRAFTSIGHT_COM_PYTHON", "PI_PYTHON"]) {
-    const v = process.env[name];
-    if (v) out.push(v);
-  }
   const agent = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
   out.push(venvPython(join(agent, "..", ".venv")));
   out.push(venvPython(join(homedir(), ".pi", ".venv")));
@@ -94,7 +104,8 @@ async function ensure(pi: ExtensionAPI, force: boolean): Promise<Setup> {
     return settled;
   }
 
-  const pool = candidates();
+  const pin = pinned();
+  const pool = pin ? [pin] : discovered();
   let installable: string | undefined;
   for (const python of pool) {
     const st = await probe(pi, python);
@@ -104,7 +115,9 @@ async function ensure(pi: ExtensionAPI, force: boolean): Promise<Setup> {
 
   if (!installable) {
     settled = { ok: false, action: "no-python",
-                detail: pool.length ? `no usable Python among: ${pool.join(" | ")}` : "no candidate interpreter exists on this machine" };
+                detail: pin
+                  ? `pinned interpreter is not a usable Python: ${pin}`
+                  : pool.length ? `no usable Python among: ${pool.join(" | ")}` : "no candidate interpreter exists on this machine" };
     return settled;
   }
 
@@ -127,7 +140,9 @@ async function ensure(pi: ExtensionAPI, force: boolean): Promise<Setup> {
 }
 
 function report(setup: Setup): string {
-  const lines = [`action:  ${setup.action}`, `python:  ${setup.python ?? "(none resolved)"}`, `windows: ${isWin}`];
+  const pin = pinned();
+  const lines = [`action:  ${setup.action}`, `python:  ${setup.python ?? "(none resolved)"}`,
+                 `pinned:  ${pin ?? "(discovered)"}`, `windows: ${isWin}`];
   if (setup.detail) lines.push(`detail:  ${setup.detail}`);
   if (setup.note) lines.push(`note:    ${setup.note}`);
   if (!setup.ok && setup.action !== "unsupported") {

@@ -166,20 +166,22 @@ harness is rarely the first `python` on `PATH` — on a typical machine `python`
 `pip` at all**. Installing into the wrong one is silent: the command succeeds, the import still
 fails.
 
-`extensions/index.ts` avoids that by resolving candidates in order, probing each, and installing
-with `uv pip install --python <exe> --editable .` only into a candidate that is a real, installable
-interpreter:
+`extensions/index.ts` avoids that by resolving interpreters, probing them, and installing with
+`uv pip install --python <exe> --editable .` only into one that is a real, installable interpreter:
 
-1. `$DRAFTSIGHT_COM_PYTHON`, then `$PI_PYTHON`
-2. the pi kernel venv (`$PI_CODING_AGENT_DIR/../.venv`, then `~/.pi/.venv`)
-3. `$VIRTUAL_ENV`
+1. `$DRAFTSIGHT_COM_PYTHON`, then `$PI_PYTHON` — a **pin**, not a hint. When either is set it is the
+   only target: nothing else is probed and nothing else is installed into. A fallback interpreter
+   that already holds the package would hide the kernel that does not, which is the exact failure
+   this bootstrap exists to prevent.
+2. otherwise, discovered in order: the pi kernel venv (`$PI_CODING_AGENT_DIR/../.venv`, then
+   `~/.pi/.venv`), then `$VIRTUAL_ENV`. First healthy one wins.
 
 Probes use `importlib.util.find_spec`, so nothing in your environment is executed. Nothing is
-reinstalled when a candidate already satisfies the import. Set `DRAFTSIGHT_COM_PYTHON` if your
+reinstalled when the target already satisfies the import. Set `DRAFTSIGHT_COM_PYTHON` when your
 kernel lives somewhere unusual — that is the one switch worth knowing.
 
-`/draftsight-com` prints the resolved interpreter, the action taken, and a copy-pasteable manual
-install command. In an interactive session that arrives as a notification; in `--print` or RPC
+`/draftsight-com` prints the resolved interpreter, the action taken, whether the interpreter was
+pinned or discovered, and a copy-pasteable manual install command. In an interactive session that arrives as a notification; in `--print` or RPC
 mode, where there is no dialog surface, the same report is written to stderr.
 
 Without pi, you are the extension: run the `uv pip install` line above against your own
@@ -210,7 +212,8 @@ Four rules that save the most time, in one place:
 | Symptom | Cause and fix |
 |---|---|
 | `ModuleNotFoundError: draftsight_com` in the agent, fine in your shell | installed into a different interpreter; check `sys.executable`, then `/draftsight-com` or `DRAFTSIGHT_COM_PYTHON` |
-| bootstrap says `no-python` | no candidate interpreter exists at all; set `DRAFTSIGHT_COM_PYTHON` to the one your agent actually runs |
+| bootstrap says `no-python` | discovery found no interpreter that exists at all; set `DRAFTSIGHT_COM_PYTHON` to the interpreter your agent actually runs |
+| bootstrap says `install-failed` and names your pinned path | the pin is not a Python interpreter, so `uv` refuses it. Note the probe *executes* the pinned path, so a wrong pin can briefly open that program |
 | `uv: command not found` during bootstrap | use `python -m pip install -e .` manually |
 | `No module named pip` from the venv's python | expected: that venv was created by uv, so install with `uv pip install --python <that python>` |
 | `pywintypes.com_error: The remote procedure call failed` | DraftSight died; `ds.connect(timeout=120)` and rerun. Scripts are idempotent when they follow rules 2 and 3 |
