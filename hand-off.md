@@ -126,6 +126,15 @@ commit either. Pushed history: `fc3bbe9` circle/arc entities, `7e2316b` merged `
 without re-running `uv pip install --editable` breaks `import draftsight_com` in the kernel
 silently. That reinstall is step 2 of any future move, non-negotiable.
 
+The same literal path is why a stale editable install is worse than a missing one. An earlier
+isolated test left `pythoncore-3.14-64` (what `WindowsApps\python.exe` resolves to, a *third*
+interpreter besides the kernel venv and the uv-managed 3.12) pointing at `Temp\pi-pkg-test\pkg\src`.
+Its `find_spec` answered `True`, so a bootstrap probe reported that interpreter **ready** while the
+code it resolved was a temp copy scheduled for deletion. `pip uninstall
+prime-agent-skill-draftsight-com` from that exact interpreter is the only cure — verified done,
+`ModuleNotFoundError` there now, kernel venv still resolves to `D:\dev-pi\draftsight-com\src`.
+Isolated test dirs also each held a **copy of `auth.json`**; delete the dirs, not just the venvs.
+
 ---
 
 ## Extension design as implemented (`extensions/index.ts`)

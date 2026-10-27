@@ -216,6 +216,7 @@ Four rules that save the most time, in one place:
 | bootstrap says `install-failed` and names your pinned path | the pin is not a Python interpreter, so `uv` refuses it. Note the probe *executes* the pinned path, so a wrong pin can briefly open that program |
 | `uv: command not found` during bootstrap | use `python -m pip install -e .` manually |
 | `No module named pip` from the venv's python | expected: that venv was created by uv, so install with `uv pip install --python <that python>` |
+| `draftsight_com.__file__` points into `AppData\Local\Temp` | a stale editable install left behind by an old test. An editable `.pth` is a promise about a directory, not a copy of the code, so the bootstrap's probe answers `ready` while the import keeps working on borrowed code — and breaks the moment TEMP is cleaned. Run `pip uninstall prime-agent-skill-draftsight-com` from that interpreter |
 | `pywintypes.com_error: The remote procedure call failed` | DraftSight died; `ds.connect(timeout=120)` and rerun. Scripts are idempotent when they follow rules 2 and 3 |
 | Dimensions/notes render at the wrong size | drafting variables were set after inserting, or a dimension angle was passed in degrees — angles are radians |
 | `UnicodeEncodeError` printing help pages | a cp949 console; `ds-docs` already reconfigures stdout to UTF-8, so update the package |
