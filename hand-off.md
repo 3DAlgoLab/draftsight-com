@@ -28,7 +28,10 @@ believing anything else written here.
 | Pin is exclusive, not a hint | **verified** | pin to an empty venv: `installed`, then `import draftsight_com, win32com, pythoncom` OK *in that venv*; report line `pinned: <path>` |
 | Discovery still resolves the kernel | **verified** | no pin -> `action: ready`, `python: ~\.pi\.venv\Scripts\python.exe`, `pinned: (discovered)`, nothing reinstalled |
 | Bogus pin fails loudly, never falls back | **verified** | pin=`notepad.exe` -> `action: install-failed`, `python:`/`pinned:` both name it, stderr line + manual command. So `no-python` is a **discovery-only** action; a pin that is not a Python reads `install-failed` |
-| `pi install git:github.com/3DAlgoLab/draftsight-com` from a fresh agent dir | **running** | see [Next](#next) step 2 |
+| `pi install git:github.com/3DAlgoLab/draftsight-com` from a fresh agent dir | **verified** | fresh agent dir, `PI_OFFLINE=1`: exit 0, `settings.json` = `["git:github.com/3DAlgoLab/draftsight-com"]`, clone at `6d5f3c8`; `/draftsight-com` with no pin -> `action: ready`, `python: ~\.pi\.venv\Scripts\python.exe`, `pinned: (discovered)` |
+| Same install drives a *pinned* empty venv | **verified** | pinned a venv created seconds earlier: `_editable_impl_prime_agent_skill_draftsight_com.pth` -> `<clone>\src` plus `pywin32-312.dist-info` appeared in its site-packages, and that venv printed `IMPORTS OK` with `__file__` inside the clone |
+| Live config untouched by the tests | **verified** | `~/.pi/agent/settings.json` has zero `draftsight` matches and still ends at `npm:pi-web-access` |
+| `/draftsight-com install` right after a session-start install | **known nuance** | `force` re-probes, so the report honestly reads `ready`, not `installed`; `installed` is only returned by the pass that actually installed. Judge an install by site-packages and `__file__`, not by that word |
 
 ---
 
@@ -179,11 +182,17 @@ inside it) is still the way to test *discovery* with no kernel venv in reach; it
 
 ## Next
 
-1. Commit and push the six files above.
-2. From a fresh isolated agent dir, `pi install git:github.com/3DAlgoLab/draftsight-com`, then
-   `pi --print "/draftsight-com"` and expect `action: ready` or `action: installed`.
-3. Confirm `~/.pi/agent/settings.json` still ends at `npm:pi-web-access` (it does today) — the
-   repo must never be installed into your live config by these tests.
+All three original steps are done: pushed (`082f7eb`, `5458e9c`, then the pin rework `6d5f3c8`),
+the `git:` install passes from a fresh isolated agent dir, and the live `settings.json` still ends
+at `npm:pi-web-access` with no draftsight entry. What is actually left:
+
+1. Nothing blocks the package. Test it on a *second* machine, where no `~/.pi/.venv` fallback
+   exists, because that is the only shape still unexercised end to end (the pin stands in for it
+   here, and it did install).
+2. Decide whether `installed` should survive a forced re-probe (see the nuance row above). Current
+   behaviour is truthful about state; it just loses the word that a repair happened.
+3. Consider refusing to probe a pinned path that is not an executable Python-looking name: pinning
+   `notepad.exe` launched Notepad before `uv` rejected it (see facts above).
 
 ## Open decisions
 
