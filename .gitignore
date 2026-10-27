@@ -222,3 +222,6 @@ __marimo__/
 # Decompiled DraftSight CHM help (draftsight_com.docs): vendor-copyrighted, ~76 MB,
 # regenerable in about two minutes with `ds-docs decompile`.
 docs/
+
+# Local pi/Fabric agent state (MCP cache, mesh state)
+.pi/

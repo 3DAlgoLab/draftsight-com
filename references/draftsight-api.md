@@ -42,6 +42,18 @@ relying on multi-loop boundaries. `InsertRotatedDimension`’s 4th argument is a
 keeps the measured value. Its 5th argument (angle) is in **radians**, not degrees: passing 90.0 renders a dimension tilted ~27° off vertical with a wrong reading (45 measured as 40.23); use `math.pi / 2` for a vertical dimension. `InsertSimpleNote(x, y, z, height, angle, text)` takes an
 explicit height, so notes do not depend on drafting variables.
 
+## Circles and arcs
+
+- `InsertCircle(x, y, z, radius)` -> `ICircle`. True circle entity; client wrapper
+  `Sheet.circle((x, y), r, ...)`.
+- `InsertArc(x, y, z, radius, start, end)` -> `ICircleArc`. **start/end are radians**,
+  CCW from +x - same radian convention as `InsertRotatedDimension`. Verified live with a
+  3/4-circle (start=`pi/2`, end=`2*pi`); client wrapper `Sheet.arc((x, y), r, start, end, ...)`.
+- Both style through the entity helper (`SetLayer` / `SetLineStyle`).
+- Do not fake a circle with a closed polyline: a 96-segment circle is visually perfect
+  (sagitta < 1 um at D20) but a true circle exports as a real arc, stays exact at any
+  zoom, and measures true length in selection code.
+
 ## Sizing: drafting variables, with proof
 
 `dsCommandOptionDouble_e` members via `doc.SetCommandOptionDouble(var, value)` /

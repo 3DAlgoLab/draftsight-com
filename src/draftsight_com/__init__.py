@@ -182,6 +182,14 @@ class Sheet:
     def polyline(self, points, closed=False, layer=None, linetype=None):
         return self._style(self.sm.InsertPolyline2D(_pts(*points), bool(closed)), layer, linetype)
 
+    def circle(self, center, radius, layer=None, linetype=None):
+        return self._style(self.sm.InsertCircle(float(center[0]), float(center[1]), 0.0, float(radius)), layer, linetype)
+
+    def arc(self, center, radius, start, end, layer=None, linetype=None):
+        """Start/end are radians, CCW from +x (per the official API docs)."""
+        return self._style(self.sm.InsertArc(float(center[0]), float(center[1]), 0.0,
+                                               float(radius), float(start), float(end)), layer, linetype)
+
     def hatch(self, loops, pattern="ANSI31", scale=1.0, angle=0.0, layer=None):
         """Hatch each closed boundary in `loops` (sequences of x,y tuples)."""
         counts, flat = [], []
@@ -247,7 +255,7 @@ class Sheet:
         return entity
 
 
-ENTITY_KINDS = ("line", "polyline", "hatch", "note", "leader", "dimension")
+ENTITY_KINDS = ("line", "polyline", "circle", "arc", "hatch", "note", "leader", "dimension")
 
 
 def build(sheet, spec):
@@ -287,6 +295,12 @@ def build(sheet, spec):
             sheet.line(a, b, **opts)
         elif kind == "polyline":
             sheet.polyline(item["polyline"], **opts)
+        elif kind == "circle":
+            c = item["circle"]
+            sheet.circle(c["center"], c["radius"], **opts)
+        elif kind == "arc":
+            a = item["arc"]
+            sheet.arc(a["center"], a["radius"], a["start"], a["end"], **opts)
         elif kind == "hatch":
             sheet.hatch(item["hatch"], **opts)
         elif kind == "note":
