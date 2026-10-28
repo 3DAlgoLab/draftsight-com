@@ -1,6 +1,6 @@
 [project]
 name = "prime-agent-skill-draftsight-com"
-version = "0.2.0"
+version = "0.3.0"
 description = "Drive a running DraftSight app over COM from the Python kernel: draw, dimension, save DWG, export proof images."
 readme = "README.md"
 requires-python = ">=3.11"
