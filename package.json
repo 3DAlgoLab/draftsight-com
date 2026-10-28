@@ -2,6 +2,7 @@
   "name": "pi-draftsight-com",
   "version": "0.1.0",
   "description": "Pi package: drive a running DraftSight app over COM from the Python kernel - draw, dimension, hatch, save DWG, export proof images.",
+  "type": "module",
   "keywords": [
     "pi-package",
     "pi-skill",
@@ -19,6 +20,9 @@
   "engines": {
     "node": ">=20"
   },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
   "pi": {
     "skills": [
       "."
@@ -29,5 +33,10 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^1.4.0",
+    "@types/node": "^26.0.0",
+    "typescript": "^6.0.3"
   }
 }
