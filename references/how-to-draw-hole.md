@@ -181,5 +181,46 @@ gives ~75% thread engagement and is what drawings dimension.
 - **118-degree drill point** below the thread depth; point cone length
   = (tap drill / 2) / tan(59 degrees). M20: 5.47 mm; M30: 8.28 mm.
 - **Drilled depth** = thread depth + 2 to 3 pitches so the 118-degree
-  point clears. M20DP45: 50 to 52.5 mm; M30DP45: 52 to 55.5 mm.
+  point clears. M20DP45: 50 to 52.5 mm; M30DP45: 52 to 55.5 mm. The drawn family instead
+  rounds the cone to a whole millimetre and adds exactly that - M30DP45 = 45 + 8 = 53,
+  M30DP55 = 55 + 8 = 63, M20DP45 = 45 + 5 = 50 - which still lands inside the band.
 - Fine-pitch callout must state the pitch (M20 x 2); coarse is implied.
+
+---
+
+### 7. Drawing it in one call
+
+`draftsight_com.tapped_hole(sheet, "M30", 55)` draws the representation above - section plus top
+view, dimensions and callouts - and returns the numbers it used. `tapped_hole_spec(size, depth)`
+is the same output as a plain spec dict, computed with no COM, so the arithmetic is reviewable and
+testable. The table below is measured out of the drawn family (`M30DP45`, `M30DP55`), in mm.
+
+| Item | Rule | M30 x 3.5 | M20 x 2.5 |
+|---|---|---|---|
+| Tap drill | major - pitch | 26.5 | 17.5 |
+| Point cone | (tap drill / 2) / tan 59°, rounded to the mm | 8 | 5 |
+| Drilled depth | thread depth + cone | 55 + 8 = 63 | 45 + 5 = 50 |
+| Section axis | `view_offset` (75) left of the top view | -75 | -75 |
+| Vertical centring | top face at +drilled/2, drill point at -drilled/2 | +/-31.5 | +/-25 |
+| Thread-depth dim | 32 right of the section axis | 55 | 45 |
+| Drilled-depth dim | 30 left of the section axis | 63 | 50 |
+| Tap-drill dim | 9.25 below the top-view circle edge | Ø26.5 | Ø17.5 |
+| Major arc, top view | 90° to 360° - a quarter missing from the upper right | r15 | r10 |
+| View titles | centred 26 below the drill point | | |
+
+Layers: `OUTLINE` 7 (minor lines, point cone, top-view circle), `MAJOR` 8 (major lines and arc),
+`THREAD` 2 (ANSI31 at scale 0.8, which renders 3.57 mm pitch, stopping at thread depth so the cone
+stays clear), `DIM` 3, `CENTER` 1 with the `CENTER` linetype, `TEXT` 7. Sizes are
+`draftsight_com.HOUSE_STYLE`, which is what those DWGs answer through `house_style()`.
+
+Two departures from ISO, both inherited from the existing set - change them on purpose, not by
+accident:
+
+- **Top-view line weight is swapped.** ISO draws the major diameter as the thick 3/4 arc and the
+  minor as a thin full circle; the family draws the minor circle thick (`OUTLINE`) and the major
+  arc thin (`MAJOR`). In the *section* the family matches ISO: the hole wall (minor) is what the
+  cutting plane passes through, so it is the thick line.
+- **`M20DP45.dwg` is a hand-drawn predecessor, not a template.** Its titles sit off-centre, its
+  callout reads `M20 x 2.5 TAP, DP45`, and it carries no drilled-depth dimension. The two M30
+  drawings define the convention, and the builder reproduces them line for line.
+

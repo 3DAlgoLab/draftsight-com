@@ -1,10 +1,10 @@
 ---
 name: draftsight-com
-description: Draw, dimension, hatch, and export in DraftSight CAD by driving the running app over COM from the Python kernel (win32com). Use when asked to automate DraftSight, script or generate a DWG from measurements or a sketch, dimension a drawing, save DWG, produce a PNG/SVG proof, or when a DraftSight problem involves dimension text size, linetype dash length, entity layers/linestyles, document save/close, or COM automation speed. Windows only.
+description: Draw, dimension, hatch, and export in DraftSight CAD by driving the running app over COM from the Python kernel (win32com). Use when asked to automate DraftSight, script or generate a DWG from measurements or a sketch, draw a tapped hole from a DP callout, dimension a drawing, save DWG, produce a PNG/SVG proof, or when a DraftSight problem involves dimension text size, linetype dash length, entity layers/linestyles, document save/close, or COM automation speed. Windows only.
 compatibility: Windows with DraftSight installed (DraftSight.Application ProgID registered) and a licensed user session; pywin32 (win32com) in the Python environment.
 metadata:
   app: DraftSight
-  api: COM IDispatch, late binding
+  api: COM IDispatch through pywin32 (typelib-bound gen_py wrappers)
 ---
 
 # DraftSight over COM
@@ -55,7 +55,7 @@ sh.layer("OUTLINE", 7); sh.layer("DIM", 3); sh.layer("CENTER", 1, "CENTER")
 sh.polyline([(0, 0), (40, 0), (40, 120), (0, 120)], closed=True, layer="OUTLINE")
 sh.hatch([[(0, 0), (40, 0), (40, 120), (0, 120)]], scale=2.0, layer="OUTLINE")
 sh.line((0, -10), (0, 130), layer="CENTER", linetype="CENTER")
-sh.dimension((0, 120), (40, 120), (0, 140), 0.0, "%%c40", layer="DIM")
+sh.dimension((0, 120), (40, 120), (0, 140), 0.0, ds.DIAMETER + "40", layer="DIM")
 sh.leader([(10, 0), (50, -30), (60, -30)], 160.0, "M20 TAP,DP35", layer="DIM")
 
 sh.zoom_fit()
@@ -94,7 +94,7 @@ SPEC = {
     {"hatch": [loop], "pattern": "ANSI31", "scale": 1.5, "layer": "HATCH"},
     {"note": [x, y, height, "SECTION B-B"], "layer": "TEXT"},
     {"leader": {"points": [...], "width": 70.0, "text": "BREAK EDGE"}, "layer": "TEXT"},
-    {"dimension": {"p1": p, "p2": p, "at": p, "angle": 0.0, "text": "%%c23"}, "layer": "DIM"},
+    {"dimension": {"p1": p, "p2": p, "at": p, "angle": 0.0, "text": "\u00d823"}, "layer": "DIM"},  # literal diameter sign - see rule 5
   ],
 }
 ```
@@ -104,7 +104,26 @@ key or a missing layer raises naming the entity index. `examples\simple_section_
 a complete worked spec (90 x 90 x 12 L-bracket: outline, hatch, two centerlines, two
 dimensions, leader, note) that renders as described.
 
-## Four rules that cost the most to learn
+## A tapped hole in one call
+
+`tapped_hole(sheet, "M30", 55)` draws the DP-family representation - section plus top view -
+from a thread size and a thread depth, and returns the numbers it used. `tapped_hole_spec(size,
+depth)` is the same output as a plain spec dict, computed with no COM, so it feeds `make`/`build`,
+prints for review, or gets asserted in a test:
+
+```python
+import draftsight_com as ds
+ds.make(ds.tapped_hole_spec("M30", 55), OUT_DWG, png=OUT_PNG)
+n = ds.tapped_hole(sh, "M30", 55)   # -> tap_drill 26.5, point_depth 8, drilled_depth 63
+```
+
+The layout is measured off the drawn family (`M30DP45`, `M30DP55`): top view at `at`, section axis
+75 mm to its left, both views centred vertically on the drilled depth, tap drill = major - pitch,
+118-degree point rounded to the millimetre, ANSI31 hatch stopping at thread depth, major-diameter
+arc drawn 90 to 360 degrees in the top view. `references/how-to-draw-hole.md` carries the number
+table and the two places where the family departs from ISO.
+
+## Six rules that cost the most to learn
 
 1. **Sizing comes from drafting variables, not dimension styles.**
    `IDimensionStyle` text/arrow/extension option groups accept writes and read
@@ -123,6 +142,16 @@ dimensions, leader, note) that renders as described.
    `SetLineStyle` (exposed as `Sheet._style`) work on every entity type; the
    `Layer`/`LineStyle` properties on returned dimension, hatch, and leader
    objects are not writable under late binding.
+5. **Text arguments are literal: `%%c` never becomes a diameter sign.** The dimension text
+   override and the `InsertLeader` / `InsertSimpleNote` text reach the entity unchanged, so
+   `"%%c26.5"` draws as `%c26.5`. Pass the character (`ds.DIAMETER`, U+00D8). A leader shelf
+   narrower than its text *wraps* the note onto two lines, so size it from the text:
+   `NOTE_WIDTH_FACTOR` (0.83 x note height per character, measured).
+6. **Read a drawing back through layers and exports, not selection.** `Sheet.layers()`
+   (`GetLayerManager().GetLayers()`; `IColor` answers `GetColorIndex()`, it has no `ColorValue`)
+   and `Sheet.house_style()` return a drawing's layers and drafting sizes exactly. The point-taking
+   `SelectByWindow` / `SelectByPoint` members exist but every call shape tried raises
+   `E_INVALIDARG`, so plan read-back around layers, SVG and PNG.
 
 ## Measurement and diagnosis
 
@@ -131,7 +160,14 @@ table with numeric proof, the COM quirks list, the crash modes, and the
 SVG/pixel rigs that measure rendered text height and dash length exactly. Read
 it before debugging anything that "should" work through the style objects. Selection sets and per-entity length
 (`GetSelectionManager` plus `GetLength()`) are documented there too, including the
-selector argument that returns nothing unless it is `1`.
+selector argument that returns nothing unless it is `1`, and why selection cannot enumerate
+an existing drawing.
+
+To match a new drawing to an existing one, read the old one: `sh = ds.open_document(app, ref)`
+then `sh.house_style()` and `sh.layers()` are exactly what `drafting_style(**kwargs)` and
+`layer(name, color, linetype)` take back. In an exported SVG, arcs and arrowheads arrive as
+`<path>` elements while hatch lines arrive as `<polyline>` groups stroked in the layer colour -
+scan both before concluding an entity is missing.
 
 `references/how-to-draw-hole.md` is the other note in that folder, and it answers a different
 question: not how the API behaves but what the geometry should be. Tapped-hole section and top

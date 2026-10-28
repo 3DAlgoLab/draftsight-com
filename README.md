@@ -93,7 +93,7 @@ sh.hatch([[(0, 0), (40, 0), (40, 120), (0, 120)]], scale=2.0, layer="OUTLINE")
 sh.circle((20, 60), 5.0, layer="OUTLINE")
 sh.arc((20, 60), 8.0, 0.0, 3.14159, layer="OUTLINE")          # radians, CCW from +x
 sh.line((0, -10), (0, 130), layer="CENTER", linetype="CENTER")
-sh.dimension((0, 120), (40, 120), (0, 140), 0.0, "%%c40", layer="DIM")
+sh.dimension((0, 120), (40, 120), (0, 140), 0.0, ds.DIAMETER + "40", layer="DIM")  # literal Ø, not "%%c"
 sh.leader([(10, 0), (50, -30), (60, -30)], 160.0, "M20 TAP,DP35", layer="DIM")
 
 sh.zoom_fit()
@@ -131,7 +131,7 @@ SPEC = {
     {"hatch":  [loop], "pattern": "ANSI31", "scale": 1.5, "layer": "HATCH"},
     {"note":   [x, y, height, "SECTION B-B"], "layer": "TEXT"},
     {"leader": {"points": [...], "width": 70.0, "text": "BREAK EDGE"}, "layer": "TEXT"},
-    {"dimension": {"p1": p, "p2": p, "at": p, "angle": 0.0, "text": "%%c23"}, "layer": "DIM"},
+    {"dimension": {"p1": p, "p2": p, "at": p, "angle": 0.0, "text": "\u00d823"}, "layer": "DIM"},
   ],
 }
 ```
@@ -139,6 +139,19 @@ SPEC = {
 Every entity needs a `layer`, and that layer must also appear in `layers`; an unknown key or
 a missing layer raises naming the entity index. See `examples/simple_section_spec.py` for a
 complete 90 × 90 × 12 mm L-bracket.
+
+### A tapped hole in one call
+
+`ds.tapped_hole(sheet, "M30", 55)` draws the section-and-top-view representation of an M30x3.5
+tapped hole 55 deep and returns its numbers (tap drill 26.5, point cone 8, drilled depth 63).
+`ds.tapped_hole_spec(size, depth)` is the same thing as a plain spec dict computed without COM, so:
+
+```python
+ds.make(ds.tapped_hole_spec("M30", 55), OUT_DWG, png=OUT_PNG)
+```
+
+The layout, thread arithmetic and layer set are measured off the drawings in the user's own set;
+`references/how-to-draw-hole.md` has the table, and `tests/test_tapped_hole.py` pins the numbers.
 
 ### Searching the official help
 
@@ -191,12 +204,12 @@ interpreter.
 
 | Document | Contents |
 |---|---|
-| `SKILL.md` | the skill body: quickstart, the four rules that cost the most, lookup order |
+| `SKILL.md` | the skill body: quickstart, the tapped-hole maker, the six rules that cost the most, lookup order |
 | `references/draftsight-api.md` | verified COM API map, drafting-variable table with numeric proof, COM quirks, crash modes, the SVG/pixel measurement rigs |
 | `references/how-to-draw-hole.md` | what the geometry *should* be: tapped-hole section and top view, callout style, ISO 261/724 tap drill and depth tables |
 | `docs/` | generated locally by `ds-docs decompile`; vendor copyrighted, so not shipped |
 
-Four rules that save the most time, in one place:
+Six rules that save the most time, in one place:
 
 1. **Sizing comes from drafting variables**, not dimension styles — `Sheet.drafting_style()`
    before inserting anything.
@@ -206,6 +219,10 @@ Four rules that save the most time, in one place:
 4. **Style entities through the entity helper** (`IEntityHelper.SetLayer` / `SetLineStyle`);
    `Layer`/`LineStyle` on returned dimension, hatch, and leader objects are not writable under
    late binding.
+5. **`text=` arguments are literal** - `"%%c26.5"` draws as `%c26.5`; pass `ds.DIAMETER` (Ø), and
+   keep a leader shelf wider than its text or the note wraps.
+6. **Read back through layers and exports** - `Sheet.layers()` and `Sheet.house_style()`; the
+   point-taking selection members raise `E_INVALIDARG` from Python.
 
 ## Troubleshooting
 
@@ -218,6 +235,8 @@ Four rules that save the most time, in one place:
 | `No module named pip` from the venv's python | expected: that venv was created by uv, so install with `uv pip install --python <that python>` |
 | `draftsight_com.__file__` points into `AppData\Local\Temp` | a stale editable install left behind by an old test. An editable `.pth` is a promise about a directory, not a copy of the code, so the bootstrap's probe answers `ready` while the import keeps working on borrowed code — and breaks the moment TEMP is cleaned. Run `pip uninstall prime-agent-skill-draftsight-com` from that interpreter |
 | `pywintypes.com_error: The remote procedure call failed` | DraftSight died; `ds.connect(timeout=120)` and rerun. Scripts are idempotent when they follow rules 2 and 3 |
+| `%c26.5` drawn where `Ø26.5` was wanted | `%%c` is a command-line code and is not expanded inside COM `text=` arguments; pass `ds.DIAMETER` |
+| Leader note split over two lines | the shelf (`width`) is narrower than the text; use `NOTE_WIDTH_FACTOR` |
 | Dimensions/notes render at the wrong size | drafting variables were set after inserting, or a dimension angle was passed in degrees — angles are radians |
 | `UnicodeEncodeError` printing help pages | a cp949 console; `ds-docs` already reconfigures stdout to UTF-8, so update the package |
 

@@ -1,9 +1,16 @@
 # Verified DraftSight COM reference
 
 Everything here was measured against a live DraftSight session through
-`win32com.client.GetActiveObject("DraftSight.Application")` with **late binding**
-(no `EnsureDispatch`, no gencache). Every DraftSight interface answers IDispatch,
-so early binding buys nothing and risks clashing with the user’s instance.
+`win32com.client.GetActiveObject("DraftSight.Application")` without `EnsureDispatch` and without asking for a gencache.
+
+Do not read that as late binding. DraftSight registers its typelib, so pywin32 builds `gen_py`
+wrappers for it on first use, and those wrappers impose typelib signatures and object types
+whether or not you asked - a `<win32com.gen_py.DraftSight 1.0 Type Library.IColor instance>` repr
+in this session is the proof. Three verified consequences: `OpenDocument` requires its `Option`
+argument (one-argument calls raise, which is why `draftsight_com._open` tries two forms),
+`GetCommandOptionDouble` returns the documented `(value, status)` pair instead of a bare number,
+and returned objects are typelib classes with their own members (`IColor.GetColorIndex()`, no
+`.ColorValue`). Probe a signature before trusting an IDispatch-era shape.
 
 ## Object map
 
@@ -38,8 +45,12 @@ app.GetColorByIndex(i)                  layer colours
 
 Hatch boundaries must be closed loops; hatch one loop per call rather than
 relying on multi-loop boundaries. `InsertRotatedDimension`’s 4th argument is a
-**text override**, not a style name: `"%%c23"` renders the diameter sign, `""`
-keeps the measured value. Its 5th argument (angle) is in **radians**, not degrees: passing 90.0 renders a dimension tilted ~27° off vertical with a wrong reading (45 measured as 40.23); use `math.pi / 2` for a vertical dimension. `InsertSimpleNote(x, y, z, height, angle, text)` takes an
+**text override**, not a style name, and the override is **literal**:
+`%%` codes are expanded by command-line input only, so `"%%c23"` reaches the drawing as `%c23`.
+Pass the character itself - `"Ø23"`, or `draftsight_com.DIAMETER + "23"` - and `""` to keep the
+measured value. `InsertLeader` and `InsertSimpleNote` text behave the same way. Verified by
+export: a note written with `%%c` exported as `%c26.5`, the same note written with U+00D8
+exported as `&#216;`. Its 5th argument (angle) is in **radians**, not degrees: passing 90.0 renders a dimension tilted ~27° off vertical with a wrong reading (45 measured as 40.23); use `math.pi / 2` for a vertical dimension. `InsertSimpleNote(x, y, z, height, angle, text)` takes an
 explicit height, so notes do not depend on drafting variables.
 
 ## Circles and arcs
@@ -57,7 +68,10 @@ explicit height, so notes do not depend on drafting variables.
 ## Sizing: drafting variables, with proof
 
 `dsCommandOptionDouble_e` members via `doc.SetCommandOptionDouble(var, value)` /
-`GetCommandOptionDouble(var)` (returns 1 on success, values in drawing units):
+`GetCommandOptionDouble(var)` (values in drawing units; under the `gen_py` wrapper the documented success flag arrives *with*
+the value as `(value, 1)`, which `Sheet.drafting_variable()` unwraps, and `Sheet.house_style()`
+reads the whole table back as `drafting_style` kwargs, which is how a new drawing is matched to an
+old one):
 
 | Option | Meaning | Classic variable |
 |---|---|---|
@@ -154,7 +168,12 @@ Text, hatch, note, dimension and block entities have **no** `GetLength()` and ra
 rather than returning 0, so guard per entity when the selection may contain them.
 `GetSelectionManager` also offers `SelectByWindow`, `SelectByPolygon`,
 `SelectByCrossline`, `SelectByPoint`, `GetPickPoints`, `ClearSelections` and
-`PaperSpaceSelectionEnabled` for driving selection programmatically.
+`PaperSpaceSelectionEnabled` for driving selection programmatically - **they do not work from Python**. Every call shape tried
+(flat `x,y,z` tuples, `VARIANT(VT_ARRAY|VT_R8, ...)`, with and without the `z` values) raises
+`E_INVALIDARG`, because the typelib types those point arguments as `IDISPATCH` and pywin32
+marshals them as such. So selection is for reading what *the user* picked (`GetPickPoints`), not
+for enumerating a drawing: `GetLayerManager().GetLayers()` (`Sheet.layers()`) and
+`ExportToSvg` / `ExportToPng` are the read-back path.
 
 ### Reading a signature off IDispatch
 
@@ -184,7 +203,11 @@ wrapper proves nothing about what the server implements - enumerate ITypeInfo in
 | `doc.Name` | `AttributeError`; use `GetPathName()` |
 | `GetDocuments().GetCount()` | it is a Python tuple; iterate it directly |
 | `CreateLayer(name)` | returns `(Layer, Result)`, not a bare `Layer` |
-| `GetEntities(...)` | needs a selection filter plus out-arrays; prefer exported images for verification |
+| `GetEntities(...)` | needs a selection filter plus out-arrays; `Sheet.layers()` plus an SVG export is the read-back that works |
+| `OpenDocument(path)` | one argument raises under the `gen_py` wrapper; use `OpenDocument(path, Option)` |
+| `%%c`, `%%d` in a `text=` argument | not expanded - they draw literally; pass `Ø` / `°` |
+| `layer.Color.ColorValue` | no such member; `IColor` answers `GetColorIndex()` and `GetRGB()` |
+| `InsertLeader` shelf narrower than its text | the note wraps onto two lines; size the shelf from the text (`NOTE_WIDTH_FACTOR`) |
 | `app.RunCommand` | exists, but system-variable strings are unnecessary once the drafting variables above are used |
 | `GetSelectedObjectCount(0)` / `GetSelectedObjects(0, out)` | returns 0 and no entities while entities are picked; the selector is **1** |
 | `GetSelectedObjects` out-VARIANT | stays `None`; the entities arrive in `ret[0]` |
@@ -201,7 +224,16 @@ instruments, and they agree:
 **SVG, exact text height.** `exp.ExportToSvg(path)`. Each `<text>` carries
 `transform="matrix(s 0 -0 s tx ty)"` with `font-size:1.397`. Text height in mm is
 `s / px_per_mm` **of that same export** — matrix scales are not comparable
-between exports because the view scale differs.
+between exports because the view scale differs. Recover px/mm of an export by dividing the
+exported `r` of a circle whose radius you know. Hatch lines export as `<polyline>` inside a group
+stroked with the layer colour, arcs as `<path>` with an `A` command, arrowheads as filled `<path>`
+triangles, so a polyline-only scan reports arcs as missing when they are in the file.
+
+**Whole-drawing diff.** To prove a generated drawing against a reference DWG, export both to SVG
+and compare in model millimetres: pick a known radius to set px/mm, convert every polyline into
+`(layer-from-stroke, x, y0, y1)` vertical runs and every `<text>` into `(string, x, y)`, sort, and
+match one-to-one. That is how `tapped_hole_spec` was proven against `M30DP55` at zero deviation on
+all ten section verticals and all seven texts.
 
 **Raster, anything visible.** `ExportToPng`, then per-colour masks:
 
