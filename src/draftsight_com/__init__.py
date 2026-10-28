@@ -8,6 +8,7 @@ Windows only, and DraftSight must be licensed and reachable: `connect` attaches
 to the running instance (launching one if asked) and never spawns a second.
 """
 
+import math
 import os
 import time
 
@@ -70,14 +71,27 @@ def new_document(app, template=TEMPLATE):
         app.GetActiveDocument()
         app.NewDocument(template)
     except (AttributeError, pythoncom.com_error):
-        app.OpenDocument(template)
+        _open(app, template)
     doc = app.GetActiveDocument()
     doc.ScaleUnit = MILLIMETERS
     return Sheet(doc, app)
 
 
+def _open(app, path):
+    """OpenDocument(PathName, Option) under the early-bound gen_py wrapper this
+    machine registers; the Option argument is not accepted by every build, so
+    fall back to the one-argument late-bound form.
+    """
+    path = os.path.abspath(path)
+    try:
+        app.OpenDocument(path, 0)
+    except (TypeError, pythoncom.com_error):
+        app.OpenDocument(path)
+    return path
+
+
 def open_document(app, path):
-    app.OpenDocument(os.path.abspath(path))
+    _open(app, path)
     doc = app.GetActiveDocument()
     doc.ScaleUnit = MILLIMETERS
     return Sheet(doc, app)
@@ -158,7 +172,50 @@ class Sheet:
         return self
 
     def drafting_variable(self, var):
-        return self.doc.GetCommandOptionDouble(var)
+        """One drafting variable in millimetres.
+
+        The early-bound wrapper hands back the documented success flag next to
+        the value as ``(value, 1)``; late binding hands back the bare value.
+        Both read as a float here, so callers can compare against `HOUSE_STYLE`.
+        """
+        value = self.doc.GetCommandOptionDouble(var)
+        if isinstance(value, tuple):
+            value = value[0]
+        return float(value)
+
+    def drafting_variables(self, *variables):
+        """Read drafting variables as {variable: millimetres}; default is every
+        variable `drafting_style` writes."""
+        return {var: self.drafting_variable(var) for var in (variables or STYLE_VARIABLES)}
+
+    def house_style(self):
+        """The live document's drafting sizes as `drafting_style` kwargs.
+
+        Reads a drawing's real sizes so a new drawing matches the existing set:
+        `new_sheet.drafting_style(**existing.house_style())`.
+        """
+        values = self.drafting_variables()
+        return {name: values[var] for name, var in zip(STYLE_NAMES, STYLE_VARIABLES)}
+
+    def layers(self):
+        """Every layer as (name, ACI colour, linetype).
+
+        `GetLayers()` is the dependable read-back path: window and point selection
+        need point marshalling the registered typelib types as IDISPATCH, so an
+        already-drawn entity list cannot be enumerated any other way. `IColor` is a
+        typelib object too - it answers `GetColorIndex()`, it has no `ColorValue`.
+        """
+        rows = []
+        for layer in self.doc.GetLayerManager().GetLayers():
+            try:
+                aci = int(layer.Color.GetColorIndex())
+            except (AttributeError, TypeError, ValueError, pythoncom.com_error):
+                aci = None
+            rows.append((layer.Name, aci, getattr(layer, "LineStyle", None)))
+        return rows
+
+    def layer_names(self):
+        return [name for name, _color, _linetype in self.layers()]
 
     def layer(self, name, color=7, linetype=None):
         lm = self.doc.GetLayerManager()
@@ -256,6 +313,184 @@ class Sheet:
 
 
 ENTITY_KINDS = ("line", "polyline", "circle", "arc", "hatch", "note", "leader", "dimension")
+
+
+# `drafting_style` keyword order, paired with the variable ids it writes.
+STYLE_NAMES = ("text_height", "arrow_size", "ext_offset", "ext_overrun", "text_offset",
+               "dim_line_extend", "note_height", "linetype_scale")
+STYLE_VARIABLES = (DM_TEXT_HEIGHT, DM_ARROW_SIZE, DM_EXT_OFFSET, DM_EXT_OVERRUN,
+                   DM_TEXT_OFFSET, DM_DIM_LINE_EXTEND, NOTE_TEXT_HEIGHT, LINETYPE_SCALE)
+
+
+ISO_COARSE_PITCH = {
+    "M1.6": 0.35, "M2": 0.40, "M2.5": 0.45, "M3": 0.50, "M4": 0.70, "M5": 0.80,
+    "M6": 1.00, "M7": 1.00, "M8": 1.25, "M10": 1.50, "M12": 1.75, "M14": 2.00,
+    "M16": 2.00, "M18": 2.50, "M20": 2.50, "M22": 2.50, "M24": 3.00, "M27": 3.00,
+    "M30": 3.50, "M33": 3.50, "M36": 4.00, "M42": 4.50, "M48": 5.00,
+}
+
+# The DP family: verified by reading M20DP45 / M30DP45 / M30DP55 back out of the DWGs.
+HOUSE_LAYERS = (("OUTLINE", 7), ("MAJOR", 8), ("THREAD", 2), ("DIM", 3),
+                ("CENTER", 1, "CENTER"), ("TEXT", 7))
+HOUSE_STYLE = {"text_height": 7.0, "arrow_size": 3.5, "ext_offset": 2.0, "ext_overrun": 2.0,
+               "text_offset": 1.5, "dim_line_extend": 3.75, "note_height": 7.0,
+               "linetype_scale": 0.35}
+
+# Literal diameter sign for COM text arguments ("%%%%c" is not substituted there).
+DIAMETER = "\u00d8"
+
+# Note text is about this wide per character per note height; 0.83 is measured
+# ("SECTION VIEW" at 7 mm renders 69.7 mm) and a leader shelf needs the width to
+# clear the text, because a shelf narrower than the text wraps it onto two lines.
+NOTE_WIDTH_FACTOR = 0.83
+
+
+def thread_spec(size, pitch=None):
+    """(major, pitch, tap drill) in millimetres for "M30", "m30 x 3" or an explicit pitch.
+
+    Tap drill = major - pitch, the ~75 % engagement rule the DP drawings dimension
+    (M30 x 3.5 -> 26.5, M20 x 2.5 -> 17.5).
+    """
+    name = str(size).strip().upper().replace(" ", "")
+    if not name.startswith("M"):
+        raise ValueError(f"thread size must look like M12 or M12x1.25, got {size!r}")
+    if "X" in name[1:]:
+        name, fine = name.split("X", 1)
+        pitch = float(fine)
+    elif pitch is None:
+        try:
+            pitch = ISO_COARSE_PITCH[name]
+        except KeyError:
+            raise ValueError(f"no ISO coarse pitch for {size!r}; pass pitch=... - known sizes are "
+                             + ", ".join(ISO_COARSE_PITCH)) from None
+    major = float(name[1:])
+    return major, float(pitch), round(major - float(pitch), 2)
+
+
+def drill_point_depth(tap_drill, point_angle=118.0):
+    """Cone length below the tap depth: (tap drill / 2) / tan(point angle / 2), to the mm.
+
+    M30 (26.5) gives 7.96 -> 8 mm, and M30DP45 / M30DP55 both dimension a drilled
+    depth of thread depth + 8, so the rounding is house style, not a shortcut.
+    """
+    return float(round((float(tap_drill) / 2.0) / math.tan(math.radians(point_angle / 2.0))))
+
+
+def tapped_hole_layout(size, tap_depth, *, pitch=None, point_angle=118.0, point_depth=None,
+                       at=(0.0, 0.0), view_offset=75.0):
+    """Every number for one tapped hole, without touching COM.
+
+    `tap_depth` is the DP figure in the callout. Layout, measured off the drawn
+    family: the top view sits at `at`, the section axis `view_offset` to its left
+    (75 mm in all three existing drawings - depth is not part of the spacing), and
+    the section is centred vertically on the top view, so the top face lands at
+    +drilled/2 and the drill point at -drilled/2.
+    """
+    major, pitch, tap_drill = thread_spec(size, pitch)
+    cone = float(point_depth) if point_depth is not None else drill_point_depth(tap_drill, point_angle)
+    drilled = round(float(tap_depth) + cone, 6)
+    ax, ay = float(at[0]), float(at[1])
+    y_top = ay + drilled / 2.0
+    return {"size": f"M{major:g}", "pitch": pitch, "major": major, "tap_drill": tap_drill,
+            "tap_depth": float(tap_depth), "point_depth": cone, "drilled_depth": drilled,
+            "top_view": (ax, ay), "section_axis": (ax - float(view_offset), ay),
+            "y_top": y_top, "y_tap_bottom": y_top - float(tap_depth), "y_apex": y_top - drilled}
+
+
+def tapped_hole_spec(size, tap_depth, *, at=(0.0, 0.0), view_offset=75.0, pitch=None,
+                     point_angle=118.0, point_depth=None, hatch_pattern="ANSI31", hatch_scale=0.8,
+                     dim_right=32.0, dim_left=30.0, dia_dim_drop=None, center_mark=None,
+                     title_gap=26.0, label=True, title=("SECTION VIEW", "TOP VIEW"),
+                     style=None, size_label=None):
+    """Build-spec dict (style, layers, entities) for a tapped hole: section + top view.
+
+    Feed it straight to `build`/`make`, or take the returned dict apart. Geometry is
+    the DP family representation read back out of M20DP45, M30DP45 and M30DP55:
+
+    * section - minor/tap-drill lines and the drill point are OUTLINE (thick), the
+      two major-diameter lines are MAJOR (thin grey), ANSI31 hatch between the minor
+      lines stops at the tap depth so the point stays clear, the centerline overshoots
+      the view by 6 mm at both ends;
+    * top view - full circle on the minor diameter, and the major diameter drawn from
+      90 to 360 degrees, i.e. a quarter arc missing from the upper right;
+    * dimensions - thread depth right of the section, drilled depth left of it, tap
+      drill diameter under the top view;
+    * text - "M30 x 3.5, DP55" ledged off the section, "D26.5 DP63" (D = the diameter
+      sign) ledged off the drill point, view titles centred 26 mm below the drill point.
+
+    `DIAMETER` is a literal diameter sign, not the "%%%%c" code: DraftSight substitutes
+    that code on the command line but hands COM text arguments straight to the entity,
+    so a code in `text=` lands on the drawing as "%c".
+
+    `at` is the top-view centre; the section goes to its left.
+    """
+    L = tapped_hole_layout(size, tap_depth, pitch=pitch, point_angle=point_angle,
+                           point_depth=point_depth, at=at, view_offset=view_offset)
+    minor_r = L["tap_drill"] / 2.0
+    major_r = L["major"] / 2.0
+    ax, ay = L["top_view"]
+    cx, _cy = L["section_axis"]
+    y0, y1, y2 = L["y_top"], L["y_tap_bottom"], L["y_apex"]
+    note_h = (style or HOUSE_STYLE).get("note_height", HOUSE_STYLE["note_height"])
+    ents = [
+        {"line": [(cx, y0 + 6.0), (cx, y2 - 6.0)], "layer": "CENTER", "linetype": "CENTER"},
+        {"line": [(cx - minor_r, y0), (cx - minor_r, y1)], "layer": "OUTLINE"},
+        {"line": [(cx + minor_r, y0), (cx + minor_r, y1)], "layer": "OUTLINE"},
+        {"line": [(cx - major_r, y0), (cx - major_r, y1)], "layer": "MAJOR"},
+        {"line": [(cx + major_r, y0), (cx + major_r, y1)], "layer": "MAJOR"},
+        {"line": [(cx - minor_r, y1), (cx + minor_r, y1)], "layer": "OUTLINE"},
+        {"line": [(cx - minor_r, y1), (cx, y2)], "layer": "OUTLINE"},
+        {"line": [(cx + minor_r, y1), (cx, y2)], "layer": "OUTLINE"},
+        {"hatch": [[(cx - minor_r, y0), (cx + minor_r, y0), (cx + minor_r, y1), (cx - minor_r, y1)]],
+         "pattern": hatch_pattern, "scale": hatch_scale, "layer": "THREAD"},
+        {"circle": {"center": (ax, ay), "radius": minor_r}, "layer": "OUTLINE"},
+        {"arc": {"center": (ax, ay), "radius": major_r, "start": math.pi / 2.0, "end": 2.0 * math.pi},
+         "layer": "MAJOR"},
+    ]
+    mark = float(major_r + 5.5) if center_mark is None else float(center_mark)
+    ents += [
+        {"line": [(ax, ay + mark), (ax, ay - mark)], "layer": "CENTER", "linetype": "CENTER"},
+        {"line": [(ax - mark, ay), (ax + mark, ay)], "layer": "CENTER", "linetype": "CENTER"},
+        {"dimension": {"p1": (cx + minor_r, y0), "p2": (cx + minor_r, y1),
+                       "at": (cx + dim_right, (y0 + y1) / 2.0), "angle": math.pi / 2.0, "text": ""},
+         "layer": "DIM"},
+        {"dimension": {"p1": (cx - minor_r, y0), "p2": (cx - minor_r, y2),
+                       "at": (cx - dim_left, (y0 + y2) / 2.0), "angle": math.pi / 2.0, "text": ""},
+         "layer": "DIM"},
+        {"dimension": {"p1": (ax - minor_r, ay), "p2": (ax + minor_r, ay),
+                       "at": (ax, ay - ((minor_r + 9.25) if dia_dim_drop is None else dia_dim_drop)),
+                       "angle": 0.0, "text": "%s%g" % (DIAMETER, L["tap_drill"])}, "layer": "DIM"},
+    ]
+    if label:
+        tap_note = "%s x %g, DP%g" % (size_label or L["size"], L["pitch"], L["tap_depth"])
+        drill_note = "%s%g DP%g" % (DIAMETER, L["tap_drill"], L["drilled_depth"])
+        ents += [
+            {"leader": {"points": [(cx + minor_r, y0 - 16.0), (cx + 45.0, y0 + 17.0),
+                                   (cx + 49.0, y0 + 17.0)],
+                        "width": len(tap_note) * note_h * NOTE_WIDTH_FACTOR,
+                        "text": tap_note}, "layer": "TEXT"},
+            {"leader": {"points": [(cx - 0.47 * minor_r, y2 + 0.3), (cx - 38.0, y2 - 16.0),
+                                   (cx - 44.0, y2 - 16.0)],
+                        "width": len(drill_note) * note_h * NOTE_WIDTH_FACTOR,
+                        "text": drill_note}, "layer": "TEXT"},
+        ]
+    if title:
+        for text, centre in zip(title, (cx, ax)):
+            half = len(text) * note_h * NOTE_WIDTH_FACTOR / 2.0
+            ents.append({"note": [centre - half, y2 - title_gap, note_h, text], "layer": "TEXT"})
+    return {"style": dict(HOUSE_STYLE, **(style or {})), "layers": list(HOUSE_LAYERS),
+            "entities": ents, "numbers": L}
+
+
+def tapped_hole(sheet, size, tap_depth, **options):
+    """Draw the tapped hole described by `tapped_hole_spec` and return its numbers.
+
+    The numbers dict is the point: assert on `drilled_depth` / `tap_drill` instead of
+    re-deriving thread arithmetic at the call site.
+    """
+    spec = tapped_hole_spec(size, tap_depth, **options)
+    build(sheet, spec)
+    return spec["numbers"]
 
 
 def build(sheet, spec):
