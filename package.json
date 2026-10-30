@@ -1,6 +1,6 @@
 {
   "name": "pi-draftsight-com",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Pi package: drive a running DraftSight app over COM from the Python kernel - draw, dimension, hatch, save DWG, export proof images.",
   "type": "module",
   "keywords": [
