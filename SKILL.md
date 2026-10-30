@@ -35,7 +35,9 @@ uv pip install --python <that sys.executable> --editable "<this skill directory>
 
 Installed as a pi package (`pi install git:github.com/3DAlgoLab/draftsight-com`), an
 extension resolves the kernel interpreter and installs it at session start; run
-`/draftsight-com` to see what it found and `/draftsight-com install` to force a redo.
+`/draftsight-com` to see what it found and `/draftsight-com install` to force a redo. A failed
+bootstrap stays quiet at session start (`DRAFTSIGHT_COM_WARN=1` brings the notice back); on
+a pi installed from npm the kernel is normally `~/.pi/agent/pi-repl/venv`.
 
 DraftSight must be reachable: either already running, or startable by `connect`.
 Windows only: every call here is COM through `pywin32`.

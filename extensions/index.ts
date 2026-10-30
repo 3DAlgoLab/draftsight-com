@@ -10,6 +10,10 @@
  * So: resolve candidate interpreters deliberately, probe each one, install
  * with `uv pip --python <exe>` into the first candidate that is a real Python
  * but lacks the package, and never touch an interpreter we did not choose.
+ *
+ * The session-start notice is opt-in (DRAFTSIGHT_COM_WARN=1). This skill is
+ * optional, and a session that never draws anything should not pay for a
+ * bootstrap it cannot act on: /draftsight-com answers the same questions.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -52,7 +56,7 @@ const venvPython = (venv: string) =>
  * which is precisely the failure this bootstrap exists to prevent.
  */
 function pinned(): string | undefined {
-  for (const name of ["DRAFTSIGHT_COM_PYTHON", "PI_PYTHON"]) {
+  for (const name of ["DRAFTSIGHT_COM_PYTHON", "PI_REPL_PYTHON", "PI_PYTHON"]) {
     const v = process.env[name];
     if (v) return v;
   }
@@ -62,13 +66,22 @@ function pinned(): string | undefined {
 /**
  * Discovered candidates, most likely to be the agent kernel first.
  * The pi kernel venv is a sibling of the agent config dir: PI_CODING_AGENT_DIR
- * defaults to ~/.pi/agent, so the venv is ~/.pi/.venv.
+ * defaults to ~/.pi/agent, so the venv is ~/.pi/.venv. A pi installed from npm
+ * has no such venv at all: its cells run in the evaluator venv pi-repl-py
+ * builds, fixed at ~/.pi/agent/pi-repl/venv whatever PI_CODING_AGENT_DIR says
+ * (that package resolves it in src/engine/python-locate.ts and builds it in
+ * scripts/setup-venv.mjs). Missing it reports no-python on a machine whose
+ * kernel already holds the package, which is a false alarm with a warning face.
  */
 function discovered(): string[] {
   const out: string[] = [];
   const agent = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
   out.push(venvPython(join(agent, "..", ".venv")));
   out.push(venvPython(join(homedir(), ".pi", ".venv")));
+  // pi-repl-py spells its POSIX interpreter python3, so probe both spellings.
+  for (const dir of [join(homedir(), ".pi", "agent", "pi-repl", "venv"), join(agent, "pi-repl", "venv")]) {
+    out.push(venvPython(dir), join(dir, "bin", "python3"));
+  }
   if (process.env.VIRTUAL_ENV) out.push(venvPython(process.env.VIRTUAL_ENV));
   return [...new Set(out.filter(Boolean))].filter(existsSync);
 }
@@ -139,6 +152,15 @@ async function ensure(pi: ExtensionAPI, force: boolean): Promise<Setup> {
   return settled;
 }
 
+/**
+ * Opt-in session-start chatter. A failed bootstrap is not something to read
+ * every session: the cell that needs the package fails with a name worth
+ * acting on, and the slash command carries the full report on demand.
+ */
+function loud(): boolean {
+  return /^(1|true|yes)$/i.test(process.env.DRAFTSIGHT_COM_WARN ?? "");
+}
+
 function report(setup: Setup): string {
   const pin = pinned();
   const lines = [`action:  ${setup.action}`, `python:  ${setup.python ?? "(none resolved)"}`,
@@ -147,7 +169,8 @@ function report(setup: Setup): string {
   if (setup.note) lines.push(`note:    ${setup.note}`);
   if (!setup.ok && setup.action !== "unsupported") {
     lines.push("", `manual:  uv pip install --python <python> --editable "${PKG_DIR}"`,
-               "         (set DRAFTSIGHT_COM_PYTHON to pin the interpreter the agent runs)");
+               "         (DRAFTSIGHT_COM_PYTHON or PI_REPL_PYTHON pins the interpreter the agent runs;",
+               "          DRAFTSIGHT_COM_WARN=1 restores the notice at session start)");
   }
   return lines.join("\n");
 }
@@ -155,7 +178,8 @@ function report(setup: Setup): string {
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     const setup = await ensure(pi, false);
-    if (setup.ok || setup.action === "unsupported") return;
+    // Quiet by default; see loud(). Installing still happens, reporting does not.
+    if (setup.ok || setup.action === "unsupported" || !loud()) return;
     const text = report(setup);
     if (ctx.hasUI) {
       ctx.ui.notify(`draftsight-com: ${setup.action}`, "warning");
