@@ -64,7 +64,7 @@ uv pip install --python "$PI_PYTHON" --editable .
 
 ```python
 import draftsight_com
-print(draftsight_com.__file__)
+print(draftsight_com.__version__, draftsight_com.__file__)
 ```
 
 ### As a skill for a coding agent

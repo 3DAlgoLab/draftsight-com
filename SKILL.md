@@ -23,7 +23,8 @@ places where the API returns success while doing nothing.
 code**, which is usually not the first `python` on `PATH`. Check it before drawing:
 
 ```python
-import draftsight_com, sys; print(draftsight_com.__file__, sys.executable)
+import draftsight_com, sys
+print(draftsight_com.__version__, draftsight_com.__file__, sys.executable)
 ```
 
 If that raises, install into that exact interpreter — `pip` may be absent from it (a uv-created venv

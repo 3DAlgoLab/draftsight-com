@@ -11,10 +11,19 @@ to the running instance (launching one if asked) and never spawns a second.
 import math
 import os
 import time
+from importlib.metadata import PackageNotFoundError, version as _dist_version
 
 import pythoncom
 import win32com.client
 from win32com.client import VARIANT
+
+# The version lives in pyproject.toml, so read it from the install record instead of restating it.
+# A cell answering "is this the code I installed?" should see a number, not just a path. The
+# fallback covers a bare source checkout dropped on sys.path with no install record behind it.
+try:
+    __version__ = _dist_version("draftsight-com")
+except PackageNotFoundError:
+    __version__ = "0.0.0+no-install-record"
 
 PROGID = "DraftSight.Application"
 DRAFTSIGHT_EXE = r"C:\Program Files\Dassault Systemes\DraftSight\bin\DraftSight.exe"
