@@ -1,6 +1,6 @@
 [project]
 name = "draftsight-com"
-version = "0.5.0"
+version = "0.6.0"
 description = "Drive a running DraftSight app over COM from Python: draw, dimension, hatch, save DWG, export proof images, and search the vendor CHM help."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -84,7 +84,13 @@ def test_leader_shelf_clears_its_text():
         for entity in ds.tapped_hole_spec(size, depth)["entities"]:
             if "leader" in entity:
                 text = entity["leader"]["text"]
-                assert entity["leader"]["width"] > len(text) * ds.HOUSE_STYLE["note_height"] * 0.7
+                # The shelf has to clear the text it carries (a short shelf wraps the note). The
+                # floor used to be a flat 0.7 per character, which was only ever a stand-in for
+                # the render width; compare against the measured sum itself.
+                need = ds.note_text_width(text, ds.HOUSE_STYLE["note_height"], safety=1.0)
+                assert entity["leader"]["width"] >= need, (text, entity["leader"]["width"], need)
+                # ...and stay near it: a shelf three times the text is a collision waiting to happen.
+                assert entity["leader"]["width"] < need * 1.25, (text, entity["leader"]["width"], need)
 
 
 def test_hatch_stops_at_thread_depth():
@@ -93,6 +99,37 @@ def test_hatch_stops_at_thread_depth():
     ys = [p[1] for p in hatch["hatch"][0]]
     n = spec["numbers"]
     assert max(ys) == n["y_top"] and min(ys) == n["y_tap_bottom"]
+
+
+def test_note_text_width_reproduces_the_rendered_widths():
+    # Widths below are notes inserted at 8 mm in a live DraftSight and read back through the
+    # entity's own GetBoundingBox(). safety=1.0 compares the class table against the render.
+    # Single-class strings pin the constants themselves; the long mixed callout pins the tolerance a
+    # real note gets (one class has to cover every capital and digit glyph, so it drifts a little).
+    for text, rendered, tol in (
+        ("ABCDEFGHIJ", 69.94, 0.01),
+        ("0123456789", 61.20, 0.01),
+        ("aaaaaaaaaa", 61.28, 0.01),
+        ("          ", 31.05, 0.01),
+        (":--.,/;()", 29.00, 0.01),
+        ("\u00d8\u00d8\u00d8\u00d8\u00d8\u00d8\u00d8\u00d8\u00d8\u00d8", 86.06, 0.01),
+        ("6-020xDP13.5-014 DRLL PCD120", 169.89, 0.04),
+    ):
+        got = ds.note_text_width(text, 8.0, safety=1.0)
+        assert abs(got - rendered) < tol * rendered, (text, got, rendered)
+    # The default safety puts a shelf just over the render, never under it (wrapping is the failure).
+    assert ds.note_text_width("6-020xDP13.5-014 DRLL PCD120", 8.0) > 169.89
+
+
+def test_flat_note_width_factor_is_wrong_in_both_directions():
+    # Why note_text_width exists: the old single 0.83 per character under-sizes a Hangul shop note
+    # and over-sizes a digit-heavy callout, so a shelf sized from it can wrap the note or collide
+    # with the geometry it was meant to clear.
+    hangul = "\uc55e\ub3c4\uc870\ub3c4\ud655\uc778\ud544\uc694"
+    assert ds.note_text_width(hangul, 8.0, safety=1.0) > len(hangul) * 8.0 * ds.NOTE_WIDTH_FACTOR
+    assert ds.note_text_width("0123456789", 8.0, safety=1.0) < 10 * 8.0 * ds.NOTE_WIDTH_FACTOR
+    assert ds.note_advance(ds.DIAMETER) > ds.note_advance("D")
+    assert abs(ds.note_text_width("ABCDEFGHIJ", 8.0) / ds.note_text_width("ABCDEFGHIJ", 12.0) - 8.0 / 12.0) < 1e-9
 
 
 def main():

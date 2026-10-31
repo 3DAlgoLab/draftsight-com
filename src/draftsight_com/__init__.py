@@ -142,6 +142,26 @@ def documents(app):
     return [doc.GetPathName() for doc in app.GetDocuments()]
 
 
+def close_scratch(app, keep=1):
+    """Close the untitled documents a probe session left behind, keeping the first `keep`.
+
+    DraftSight refuses to run with no document at all, so a session of throwaway new_document()
+    calls piles up NONAME_n.dwg entries (this machine had reached twelve). Verified by clearing that
+    pile: activate the keeper first, then close the rest by the exact name documents() reports --
+    never the active document, which takes the COM server down. close_document() cannot do this: it
+    matches by absolute path, and an unsaved document has none.
+    """
+    names = [name for name in documents(app) if name.startswith("NONAME")]
+    if len(names) <= keep:
+        return 0
+    activate(app, names[keep - 1])
+    closed = 0
+    for name in names[keep:]:
+        app.CloseDocument(name, False)
+        closed += 1
+    return closed
+
+
 def _pts(*xy):
     return VARIANT(R8, tuple(float(v) for pair in xy for v in (pair[0], pair[1])))
 
@@ -353,6 +373,68 @@ DIAMETER = "\u00d8"
 # clear the text, because a shelf narrower than the text wraps it onto two lines.
 NOTE_WIDTH_FACTOR = 0.83
 
+# Per-class advances, measured by inserting notes at 8 mm and 12 mm into a live DraftSight and
+# reading each entity's own GetBoundingBox() back: rendered width = note height x sum of the
+# advances over the characters, with the same factors at both heights (so exactly linear) and
+# rendered. Single-class strings land within 0.2% ("ABCDEFGHIJ" predicts 69.92 against 69.94 rendered);
+# a mixed 28-character callout ("6-020xDP13.5-014 DRLL PCD120", 169.9 rendered) comes out 3.2% under,
+# because one class has to cover every capital and digit shape -- which is what `safety` is for. Prefer
+# note_text_width() over the flat factor above: measured against it, a Hangul shop note runs 16% wider
+# than 0.83/char predicts and a digit-heavy hole callout 8% narrower, so the flat number is wrong in
+# both directions.
+NOTE_ADVANCE_SPACE = 0.388       # ten spaces
+NOTE_ADVANCE_PUNCT = 0.403       # ":--.,/;()"
+NOTE_ADVANCE_DIGIT = 0.765       # "0123456789" -- digits render tabular
+NOTE_ADVANCE_LOWER = 0.766       # "aaaaaaaaaa"; narrow glyphs (i, j, f, l, t) run nearer 0.64
+NOTE_ADVANCE_CAPS = 0.874        # "ABCDEFGHIJ"
+NOTE_ADVANCE_HANGUL = 0.964      # "평도조도확인" -- CJK syllables measure the same
+NOTE_ADVANCE_DIAMETER = 1.076    # ten "Ø" -- the widest character a hole callout carries
+
+# Fullwidth ranges: Hangul (jamo, syllables, compat jamo), CJK, compat forms.
+WIDE_RANGES = ((0x1100, 0x11FF), (0x2E80, 0x9FFF), (0xA960, 0xA97F), (0xAC00, 0xD7A3),
+               (0xF900, 0xFAFF), (0xFE30, 0xFE4F), (0xFF00, 0xFF60), (0xFFE0, 0xFFE6))
+
+
+def note_advance(char):
+    """Advance of one note character as a multiple of the note height (constants above)."""
+    if char == " ":
+        return NOTE_ADVANCE_SPACE
+    if char == DIAMETER:
+        return NOTE_ADVANCE_DIAMETER
+    code = ord(char)
+    if any(lo <= code <= hi for lo, hi in WIDE_RANGES):
+        return NOTE_ADVANCE_HANGUL
+    if "0" <= char <= "9":
+        return NOTE_ADVANCE_DIGIT
+    if "A" <= char <= "Z":
+        return NOTE_ADVANCE_CAPS
+    if "a" <= char <= "z":
+        return NOTE_ADVANCE_LOWER
+    return NOTE_ADVANCE_PUNCT
+
+
+def note_text_width(text, height, safety=1.05):
+    """Millimetres one line of `text` at note `height` occupies.
+
+    Size a leader shelf from this, and clear-of-geometry checks: a shelf narrower than its text
+    wraps the note onto two lines. `safety` covers side bearings plus the ~1% the class table
+    misses; pass safety=1.0 for the bare sum (that is what the tests compare against renders).
+    Measured, not vendor-documented: DraftSight gives no text-metrics API.
+    """
+    return sum(note_advance(c) for c in text) * float(height) * safety
+
+
+def entity_extents(entity):
+    """(x0, y0, x1, y1) of a drawn entity, read back from its GetBoundingBox().
+
+    GetBoundingBox answers six doubles (minX, minY, minZ, maxX, maxY, maxZ); this keeps the planar
+    box. Verified on notes and leaders. Measured caveat: a leader's box covers its line only -- the
+    note it carries is a separate entity and is not in that box -- so measure the note itself, or
+    predict a leader's text with note_text_width() before drawing it.
+    """
+    box = entity.GetBoundingBox()
+    return (box[0], box[1], box[3], box[4])
+
 
 def thread_spec(size, pitch=None):
     """(major, pitch, tap drill) in millimetres for "M30", "m30 x 3" or an explicit pitch.
@@ -476,11 +558,11 @@ def tapped_hole_spec(size, tap_depth, *, at=(0.0, 0.0), view_offset=75.0, pitch=
         ents += [
             {"leader": {"points": [(cx + minor_r, y0 - 16.0), (cx + 45.0, y0 + 17.0),
                                    (cx + 49.0, y0 + 17.0)],
-                        "width": len(tap_note) * note_h * NOTE_WIDTH_FACTOR,
+                        "width": note_text_width(tap_note, note_h),
                         "text": tap_note}, "layer": "TEXT"},
             {"leader": {"points": [(cx - 0.47 * minor_r, y2 + 0.3), (cx - 38.0, y2 - 16.0),
                                    (cx - 44.0, y2 - 16.0)],
-                        "width": len(drill_note) * note_h * NOTE_WIDTH_FACTOR,
+                        "width": note_text_width(drill_note, note_h),
                         "text": drill_note}, "layer": "TEXT"},
         ]
     if title:

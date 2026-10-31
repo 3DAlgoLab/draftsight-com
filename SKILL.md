@@ -27,6 +27,11 @@ import draftsight_com, sys
 print(draftsight_com.__version__, draftsight_com.__file__, sys.executable)
 ```
 
+The version comes from the *install record*, not the source tree: after editing the checkout, bump
+`pyproject.toml` **and** re-run the editable install, or the code running in the kernel is new while
+`__version__` still reports the old number. (`--no-build-isolation` also needs `hatchling` and
+`editables` inside that interpreter; without them pip fails at metadata generation.)
+
 If that raises, install into that exact interpreter — `pip` may be absent from it (a uv-created venv
 has none), so prefer `uv pip --python`. When the code runs inside an agent kernel, ask that kernel
 which interpreter it is instead of guessing from `PATH`:
@@ -154,8 +159,10 @@ table and the two places where the family departs from ISO.
    override and the `InsertLeader` / `InsertSimpleNote` text reach the entity unchanged, so
    `"%%c26.5"` draws as `%c26.5`. Pass the character (`ds.DIAMETER`, U+00D8). A leader shelf
    narrower than its text *wraps* the note onto two lines, so size it from the text:
-   `NOTE_WIDTH_FACTOR` (0.83 x note height per character, measured).
-6. **Read a drawing back through layers and exports, not selection.** `Sheet.layers()`
+   `note_text_width(text, height)` -- per-class advances measured off rendered entities: Ø is 1.076 per unit height and a Hangul/CJK syllable 0.964, both *wider* than a capital (0.874), while digits (0.765) and spaces (0.388) are narrower, so the flat 0.83 in `NOTE_WIDTH_FACTOR` missizes in both directions and is kept only as a rough Latin average. To check what a note really took, `entity_extents(entity)` reads a drawn entity's box back -- but a leader's box covers its line only, never the note text it carries, so predict a leader's note with `note_text_width` before drawing it.
+   Probe sessions leave unsaved `NONAME_n.dwg` documents behind (DraftSight will not run with zero
+   documents); `close_scratch(app)` closes them, keeping one, and never touches the active document.
+ 6. **Read a drawing back through layers and exports, not selection.** `Sheet.layers()`
    (`GetLayerManager().GetLayers()`; `IColor` answers `GetColorIndex()`, it has no `ColorValue`)
    and `Sheet.house_style()` return a drawing's layers and drafting sizes exactly. The point-taking
    `SelectByWindow` / `SelectByPoint` members exist but every call shape tried raises
