@@ -1,7 +1,7 @@
 # draftsight-com
 
-Drive a **running DraftSight** application over COM from Python, and hand the whole
-workflow to a coding agent as a [pi](https://pi.dev) skill.
+Drive a **running DraftSight** application over COM from Python: draw, dimension, hatch,
+save DWG, export a PNG proof, and search the vendor's 6,457 pages of help without reading them.
 
 One persistent `win32com` connection means geometry is pushed **in-process**. A full
 drawing — layers, polylines, hatches, dimensions, leaders, DWG save, PNG proof export —
@@ -12,15 +12,14 @@ Everything in the references was verified against a live DraftSight session, inc
 the members that return success while doing nothing.
 
 ```
-repo root = pi package
-├── package.json          pi manifest: skill "." + bootstrap extension
-├── SKILL.md              the skill the model loads (Agent Skills format)
-├── extensions/index.ts   installs the Python half into the agent kernel venv
-├── src/draftsight_com/   the Python package (`draftsight_com`, `ds-docs`)
+draftsight-com/
+├── src/draftsight_com/   the package: the COM client, plus `ds-docs`, the CHM help extractor/searcher
+├── SKILL.md              Agent Skills file: how to drive the package, and the six rules that cost most
 ├── references/           verified API map, hard-won rules, drafting conventions
-├── examples/             a complete worked spec
-└── pyproject.toml        the Python distribution
-```
+├── examples/             a complete worked drawing spec, a help-lookup script
+├── tests/                the tapped-hole arithmetic — no DraftSight needed
+└── pyproject.toml        the Python distribution (`draftsight_com` and `ds-docs` console scripts)
+
 
 ## Prerequisites
 
@@ -28,50 +27,60 @@ repo root = pi package
 |---|---|
 | Windows | COM automation via `pywin32`; nothing cross-platform here |
 | DraftSight installed and licensed | ProgID `DraftSight.Application`; default install path `C:\Program Files\Dassault Systemes\DraftSight\` |
-| Python ≥ 3.11 with `pywin32` | the interpreter your agent actually runs code in, see [How the install works](#how-the-install-works) |
-| pi (optional) | only for the skill side |
+| Python ≥ 3.11 with `pywin32` | install it into the interpreter that will run the code — see [Install](#install) |
+
 
 ## Install
 
-### As a pi package (recommended)
-
-```sh
-pi install git:github.com/3DAlgoLab/draftsight-com
-```
-
-That gives you the skill plus an extension that installs the Python package for you. Restart
-pi, then check both halves:
-
-```
-/draftsight-com            # action: ready   python: ...\.pi\.venv\Scripts\python.exe
-```
-
-`/draftsight-com install` forces a reinstall (`uv pip install --editable`).
-
-### Python only, any agent or plain scripts
+### Install
 
 ```powershell
 git clone https://github.com/3DAlgoLab/draftsight-com
-uv pip install --python <your-python> --editable .\draftsight-com
+cd draftsight-com
+uv pip install --python <the-python-that-runs-your-code> --editable .
 ```
 
-Use `python -m pip install -e .` if you do not have [uv](https://docs.astral.sh/uv/).
-Install with `.[docs]` if you want the pixel-measurement rigs from the references.
+Use `python -m pip install -e .` if you do not have [uv](https://docs.astral.sh/uv/). Add `.[docs]`
+if you want the pixel-measurement rigs described in the references (they need `numpy` and
+`pillow`).
 
-**Point it at the interpreter that will run the code.** In the last `python` you ran, does
-`import draftsight_com` succeed? That question matters more here than in most packages,
-because agent harnesses often have three interpreters in play:
+**The target interpreter is the whole problem.** In the last `python` you ran, does
+`import draftsight_com` succeed? This matters more here than in most packages because the code
+usually runs in an interpreter that is not the first `python` on `PATH`: a REPL kernel, a job
+runner, a notebook server. A wrong target is silent — the install succeeds, the import still
+fails. Ask the process that will run the code:
+
+```python
+import sys, os
+print(sys.executable)
+print(os.environ.get("PI_PYTHON", ""))
+```
+
+Then install into exactly that path, and verify from the same place rather than from your shell:
+
+```
+uv pip install --python "$PI_PYTHON" --editable .
+```
+
+```python
+import draftsight_com
+print(draftsight_com.__file__)
+```
+
+### As a skill for a coding agent
+
+`SKILL.md` is an [Agent Skills](https://agentskills.io/specification) file, so any harness that
+follows the spec can pick it up. For pi, point the skills directory at the checkout so there stays
+one copy of the files:
 
 ```powershell
-python -c "import draftsight_com, sys; print(draftsight_com.__file__); print(sys.executable)"
+cmd /c mklink /J "%USERPROFILE%\.pi\agent\skills\draftsight-com" "D:\dev\draftsight-com"
 ```
 
-### From a local checkout, as a pi package
-
-```sh
-pi install ./draftsight-com        # local sources load in place, no copy
-pi remove ./draftsight-com         # later
-```
+A junction rather than a copy: `SKILL.md` reaches `references/` by relative path, so copying the
+file alone breaks the map, and copying the tree leaves two versions to keep in sync. The Python
+package still has to be installed into the interpreter the agent runs cells in — a skill tells the
+model what to call, it does not carry Python code.
 
 ## Quickstart
 
@@ -170,42 +179,24 @@ ds-docs lookup dsLnWt -n 3 -l 20                 # an enum family, shorter outpu
 Same from Python: `from draftsight_com import docs` → `docs.lookup(...)`, `docs.decompile(...)`,
 `docs.find_pages`, `docs.html2txt`, `docs.status`.
 
-## How the install works
+## Which interpreter, in one place
 
-A repo that is both a pi package and a Python package has two install paths, and pi only runs
-npm installs. The Python half therefore needs the *right* interpreter, which for an agent
-harness is rarely the first `python` on `PATH` — on a typical machine `python` is a uv-managed
-3.12, `py -3` a 3.14, and the pi kernel is a uv-created venv at `~/.pi/.venv` that has **no
-`pip` at all**. Installing into the wrong one is silent: the command succeeds, the import still
-fails.
+There is exactly one install target: **the interpreter that will execute the code**. Everything
+else here is detail.
 
-`extensions/index.ts` avoids that by resolving interpreters, probing them, and installing with
-`uv pip install --python <exe> --editable .` only into one that is a real, installable interpreter:
+| You run the code from | Find the interpreter by | Then |
+|---|---|---|
+| a shell or a scheduled script | `Get-Command python` | install into it |
+| an agent kernel (a REPL tool, Jupyter) | a cell: `import sys; print(sys.executable)`, or the pin that kernel exports (`PI_PYTHON` for pytool) | `uv pip install --python "$PI_PYTHON" --editable .` |
+| a uv-created venv | it usually has **no `pip` at all** | `uv pip install --python <that venv python>` |
 
-1. `$DRAFTSIGHT_COM_PYTHON`, then `$PI_REPL_PYTHON`, then `$PI_PYTHON` — a **pin**, not a hint. When either is set it is the
-   only target: nothing else is probed and nothing else is installed into. A fallback interpreter
-   that already holds the package would hide the kernel that does not, which is the exact failure
-   this bootstrap exists to prevent.
-2. otherwise, discovered in order: the pi kernel venv (`$PI_CODING_AGENT_DIR/../.venv`, then
-   `~/.pi/.venv`), then the pi-repl-py evaluator venv (`~/.pi/agent/pi-repl/venv` — on a pi
-   installed from npm that is the only Python the session can reach), then `$VIRTUAL_ENV`.
-   First healthy one wins.
+Two traps that cost hours:
 
-Probes use `importlib.util.find_spec`, so nothing in your environment is executed. Nothing is
-reinstalled when the target already satisfies the import. Set `DRAFTSIGHT_COM_PYTHON` when your
-kernel lives somewhere unusual — that is the one switch worth knowing.
-
-`/draftsight-com` prints the resolved interpreter, the action taken, whether the interpreter was
-pinned or discovered, and a copy-pasteable manual install command. In an interactive session that arrives as a notification; in `--print` or RPC
-mode, where there is no dialog surface, the same report is written to stderr.
-
-Session start does **not** repeat that report when the bootstrap fails: the skill is
-optional and the failure is reproducible on demand, so `ensure()` still resolves and
-installs, it just keeps quiet. Set `DRAFTSIGHT_COM_WARN=1` to get the notice back.
-
-Without pi, you are the extension: run the `uv pip install` line above against your own
-interpreter.
-
+- **32/64-bit.** A 32-bit Python cannot attach to a 64-bit DraftSight. Check once:
+  `python -c "import sys; print(sys.maxsize > 2**32 and '64-bit' or '32-bit')"`.
+- **Stale editable installs.** An editable `.pth` is a promise about a *directory*, not a copy of
+  the code. If it points into `AppData\Local\Temp`, the import works today and breaks the day TEMP
+  is cleaned. `uv pip list --python <exe> | grep -i draftsight`, then uninstall and reinstall.
 ## References
 
 | Document | Contents |
@@ -234,12 +225,11 @@ Six rules that save the most time, in one place:
 
 | Symptom | Cause and fix |
 |---|---|
-| `ModuleNotFoundError: draftsight_com` in the agent, fine in your shell | installed into a different interpreter; check `sys.executable`, then `/draftsight-com` or `DRAFTSIGHT_COM_PYTHON` |
-| `/draftsight-com` says `no-python` | discovery found no interpreter that exists at all; set `DRAFTSIGHT_COM_PYTHON` or `PI_REPL_PYTHON` to the interpreter your agent actually runs |
-| bootstrap says `install-failed` and names your pinned path | the pin is not a Python interpreter, so `uv` refuses it. Note the probe *executes* the pinned path, so a wrong pin can briefly open that program |
-| `uv: command not found` during bootstrap | use `python -m pip install -e .` manually |
+| `ModuleNotFoundError: draftsight_com` in the agent but fine in your shell | installed into a different interpreter; ask that kernel `print(sys.executable)` and install into the path it names |
+| `ImportError: DLL load failed while importing win32api` | pywin32 is absent from that interpreter, or it is 32-bit against a 64-bit app |
+
 | `No module named pip` from the venv's python | expected: that venv was created by uv, so install with `uv pip install --python <that python>` |
-| `draftsight_com.__file__` points into `AppData\Local\Temp` | a stale editable install left behind by an old test. An editable `.pth` is a promise about a directory, not a copy of the code, so the bootstrap's probe answers `ready` while the import keeps working on borrowed code — and breaks the moment TEMP is cleaned. Run `pip uninstall prime-agent-skill-draftsight-com` from that interpreter |
+| `draftsight_com.__file__` points into `AppData\Local\Temp` | a stale editable install. An editable `.pth` is a promise about a directory, not a copy of the code, so the import works today on borrowed code and breaks the moment TEMP is cleaned. Uninstall from that interpreter and reinstall against the checkout |
 | `pywintypes.com_error: The remote procedure call failed` | DraftSight died; `ds.connect(timeout=120)` and rerun. Scripts are idempotent when they follow rules 2 and 3 |
 | `%c26.5` drawn where `Ø26.5` was wanted | `%%c` is a command-line code and is not expanded inside COM `text=` arguments; pass `ds.DIAMETER` |
 | Leader note split over two lines | the shelf (`width`) is narrower than the text; use `NOTE_WIDTH_FACTOR` |
@@ -249,9 +239,9 @@ Six rules that save the most time, in one place:
 ## Uninstall
 
 ```sh
-pi remove git:github.com/3DAlgoLab/draftsight-com
-uv pip uninstall --python <that python> prime-agent-skill-draftsight-com
+uv pip uninstall --python <that python> draftsight-com
 ```
+
 
 The generated `docs/` tree is yours to keep or delete; nothing references it at runtime until
 you run `ds-docs decompile` again.

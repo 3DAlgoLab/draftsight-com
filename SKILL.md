@@ -26,19 +26,24 @@ code**, which is usually not the first `python` on `PATH`. Check it before drawi
 import draftsight_com, sys; print(draftsight_com.__file__, sys.executable)
 ```
 
-If that raises, install into that exact interpreter - `pip` may be absent from it, so
-prefer `uv pip --python`:
+If that raises, install into that exact interpreter — `pip` may be absent from it (a uv-created venv
+has none), so prefer `uv pip --python`. When the code runs inside an agent kernel, ask that kernel
+which interpreter it is instead of guessing from `PATH`:
+
+```python
+import sys, os
+print(sys.executable)
+print(os.environ.get("PI_PYTHON", ""))
+```
 
 ```
-uv pip install --python <that sys.executable> --editable "<this skill directory>"
+uv pip install --python "<that path>" --editable "<this skill directory>"
 ```
 
-Installed as a pi package (`pi install git:github.com/3DAlgoLab/draftsight-com`), an
-extension resolves the kernel interpreter and installs it at session start; run
-`/draftsight-com` to see what it found and `/draftsight-com install` to force a redo. A failed
-bootstrap stays quiet at session start (`DRAFTSIGHT_COM_WARN=1` brings the notice back); on
-a pi installed from npm the kernel is normally `~/.pi/agent/pi-repl/venv`.
-
+Install into the kernel's interpreter and nothing else. A copy sitting in some *other* Python makes
+the check above pass while the cell still fails, and that is the one failure mode worth refusing to
+tolerate. This package ships no agent-side installer: `SKILL.md` is instructions, the code ships as
+`draftsight_com`.
 DraftSight must be reachable: either already running, or startable by `connect`.
 Windows only: every call here is COM through `pywin32`.
 

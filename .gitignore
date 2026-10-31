@@ -223,8 +223,5 @@ __marimo__/
 # regenerable in about two minutes with `ds-docs decompile`.
 docs/
 
-# Node dev tooling (types for the pi peer dependency, tsc)
-node_modules/
-
 # Local pi/Fabric agent state (MCP cache, mesh state)
 .pi/
